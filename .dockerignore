@@ -1,25 +1,47 @@
+# VCS / CI
 .git
+.git/
 .github
-.venv
-venv
+
+# Python caches / envs
 __pycache__
+**/__pycache__/
 *.py[cod]
-.pytest_cache
+**/*.pyc
+**/*.pyo
+.venv
+.venv/
+venv
+venv/
 .mypy_cache
+.mypy_cache/
+.pytest_cache
+.pytest_cache/
 .ruff_cache
+.ruff_cache/
 .coverage
 htmlcov
+.python-version
+
+# Secrets (keep the template)
 .env
 .env.*
 !.env.example
-data/raw/*
-data/normalized/*
-data/graph/*
-data/embeddings/*
-data/events/*
-data/time_series/*
-data/feedback/*
+
+# Tests are not needed in the runtime image
+tests/
+
+# Runtime data — keep the cold-start seed graph (data/seed) shippable,
+# exclude everything that is generated at runtime.
+data/raw/
+data/normalized/
+data/graph/
+data/embeddings/
+data/events/
+data/time_series/
+data/feedback/
+
+# Local artifacts
+*.log
 *.db
 *.sqlite3
-*.log
-.python-version

@@ -4,7 +4,7 @@ on:
   push:
     branches: ["**"]
   pull_request:
-    branches: ["main", "master"]
+    branches: ["main", "master", "phase-*"]
 
 env:
   PYTHON_VERSION: "3.11"
@@ -35,9 +35,17 @@ jobs:
         run: black --check .
 
       - name: Validate config YAML loads
-        run: python -m utils.config_loader
+        run: |
+          python -c "
+          import yaml, pathlib
+          for f in pathlib.Path('config').glob('*.yaml'):
+              yaml.safe_load(f.read_text())
+          print('All YAML configs OK')
+          "
 
   # ---- Job 2: unit tests + coverage ----------------------------------------
+  # Runs the full unit suite (Phase 1-7 + Phase 8). Coverage is gated at 90%
+  # on the deterministic core packages declared in pyproject [tool.coverage].
   unit:
     name: Unit Tests + Coverage
     runs-on: ubuntu-latest
@@ -59,10 +67,10 @@ jobs:
       - name: Run unit tests with coverage
         run: |
           pytest tests/unit -q \
-            --cov=api \
+            --cov \
             --cov-report=term-missing \
             --cov-report=xml \
-            --cov-fail-under=75
+            --cov-fail-under=90
 
       - name: Upload coverage artifact
         if: always()

@@ -8,8 +8,15 @@ from __future__ import annotations
 
 import pytest
 
-from orchestration.flows.daily_pipeline import run_daily_pipeline
-from orchestration.flows.realtime_ingestion import run_realtime_ingestion
+# ── Guard: orchestration flows pull in config_loader / collector helpers whose
+# optional deps may be absent in a dependency-light environment. These guards
+# make the module skip cleanly there; in CI (requirements-dev installs both)
+# the tests run normally.
+pytest.importorskip("yaml")  # config_loader
+pytest.importorskip("httpx")  # collector helpers
+
+from orchestration.flows.daily_pipeline import run_daily_pipeline  # noqa: E402
+from orchestration.flows.realtime_ingestion import run_realtime_ingestion  # noqa: E402
 
 
 @pytest.mark.integration

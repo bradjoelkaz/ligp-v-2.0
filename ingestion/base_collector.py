@@ -20,13 +20,13 @@ the resilience core unit-testable without network access.
 
 from __future__ import annotations
 
-import abc
 import asyncio
 import json
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -36,6 +36,28 @@ from utils.logger import get_logger
 from utils.retry import compute_delay
 
 _log = get_logger(__name__)
+
+
+# --------------------------------------------------------------------------- #
+# Raw document (Phase 7 real-API collectors)
+# --------------------------------------------------------------------------- #
+@dataclass
+class RawDocument:
+    """A single collected document from an external source.
+
+    Used by the real-API collectors under ``ingestion/collectors/``. Distinct
+    from ``ingestion/schema.RawDocument`` (the Phase 1 parsing schema) — this
+    one carries the fields the live API collectors populate directly.
+    """
+
+    source: str
+    url: str = ""
+    title: str = ""
+    body: str = ""
+    author: str = ""
+    published_at: datetime | None = None
+    lang: str = "ko"
+    raw: dict[str, Any] = field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------- #
@@ -211,23 +233,47 @@ class CollectorConfig:
         )
 
 
-class BaseCollector(abc.ABC):
+class BaseCollector:
     """Template for resilient async collectors.
 
-    Subclasses implement :meth:`fetch` (the raw I/O). The base class wires in
-    rate limiting, circuit breaking, retry/backoff, and DLQ handling so one
-    failing source never stops the others (QA-001).
+    Two construction styles are supported:
+
+    * **Config style** (Phase 1): ``BaseCollector(config)`` where ``config`` is
+      a :class:`CollectorConfig`. Subclasses implement :meth:`fetch` and the
+      base :meth:`collect` wires in rate limiting / circuit breaking / DLQ.
+    * **Lightweight style** (Phase 7 real-API collectors):
+      ``BaseCollector(source="naver_blog", rate_limit=0.29)``. Subclasses
+      override :meth:`collect` themselves and use :meth:`_log_error`.
     """
 
-    def __init__(self, config: CollectorConfig, dlq: DeadLetterQueue | None = None):
+    def __init__(
+        self,
+        config: CollectorConfig | None = None,
+        dlq: DeadLetterQueue | None = None,
+        *,
+        source: str | None = None,
+        rate_limit: float | None = None,
+    ):
+        if config is None:
+            config = CollectorConfig(platform_id=source or "collector")
         self.config = config
+        self.source = source or config.platform_id
+        self.rate_limit = rate_limit
         self.breaker = CircuitBreaker(config.failure_threshold, config.reset_timeout_sec)
         self.bucket = TokenBucket(config.api_quota_per_day, config.quota_window_sec)
         self.dlq = dlq or DeadLetterQueue(max_retries=config.max_retries)
 
-    @abc.abstractmethod
+    def _log_error(self, event: str, error: str) -> None:
+        """Structured error log helper for collectors."""
+        _log.error(event, extra={"source": self.source, "error": error})
+
     async def fetch(self, **kwargs: Any) -> list[dict[str, Any]]:
-        """Perform the raw fetch and return a list of normalized-ish records."""
+        """Perform the raw fetch and return a list of normalized-ish records.
+
+        Overridden by config-style collectors. Lightweight collectors override
+        :meth:`collect` instead and may leave this unimplemented.
+        """
+        raise NotImplementedError("fetch() must be implemented by config-style collectors")
 
     async def collect(self, **kwargs: Any) -> list[dict[str, Any]]:
         """Resilient collection entry point.

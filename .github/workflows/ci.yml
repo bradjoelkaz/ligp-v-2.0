@@ -51,9 +51,9 @@ jobs:
           cache: pip
 
       # Unit tests are offline-safe (heavy libs are lazy-imported with
-      # fallbacks), so we only need a light toolchain here.
+      # fallbacks). httpx is needed by collector tests that mock the client.
       - name: Install dependencies
-        run: pip install pyyaml pytest pytest-cov
+        run: pip install pyyaml pytest pytest-cov httpx
 
       - name: Run unit tests with coverage
         run: pytest tests/unit/ -q --cov --cov-report=term-missing --cov-fail-under=90

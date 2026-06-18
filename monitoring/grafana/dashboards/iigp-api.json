@@ -3,6 +3,7 @@
   "editable": true,
   "schemaVersion": 39,
   "title": "IIGP API — Observability",
+  "uid": "iigp-api",
   "tags": ["iigp", "api"],
   "timezone": "browser",
   "time": { "from": "now-1h", "to": "now" },

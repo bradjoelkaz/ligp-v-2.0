@@ -1,0 +1,80 @@
+# =============================================================================
+# IIGP v2.0 — weights.yaml
+# GraphScore weights + CTR Bayesian priors + decay + learning rate + bounds.
+# Refs: DD-002, QA-009, QA-014, QA-017, QA-025.
+# =============================================================================
+
+# ---- GraphScore weighted sum (QA-017 / DD-002) -----------------------------
+# GraphScore = w_edge*norm(Σedge) + w_centrality*norm(centrality)
+#            + w_trend*norm(trend) + w_event*norm(event_boost)
+# Components are min-max normalized to [0,1] before weighting. Weights sum to 1.
+graph_score:
+  w_edge: 0.30
+  w_centrality: 0.25
+  w_trend: 0.30
+  w_event: 0.15
+  normalization: minmax            # minmax | zscore
+
+# ---- Edge default weights by relation type (QA-009) ------------------------
+edge_default_weights:
+  related_to: 0.50
+  causes: 0.80
+  similar_to: 0.40
+  leads_to: 0.60
+  monetizes_via: 0.90
+  triggers_emotion: 0.70
+  belongs_to_event: 0.65
+
+# ---- CTR Bayesian priors per platform (DD-002 / QA-014) --------------------
+# P_prior(CTR|platform) = Beta(alpha=clicks_prior, beta=impressions_prior)
+platform_ctr_prior:
+  blog:      { alpha: 2.0,  beta: 98.0 }
+  youtube:   { alpha: 4.0,  beta: 96.0 }
+  instagram: { alpha: 3.5,  beta: 96.5 }
+  newsletter: { alpha: 5.0, beta: 95.0 }
+  shorts:    { alpha: 4.5,  beta: 95.5 }
+
+# ---- Industry-average funnel priors (QA-014) -------------------------------
+# Seed values for P(click) x P(engage) x P(convert); updated via Bayesian update.
+funnel_priors:
+  p_engage: { alpha: 10.0, beta: 90.0 }
+  p_convert:
+    cpm_ads:         { alpha: 1.0,  beta: 99.0 }
+    affiliate:       { alpha: 2.0,  beta: 98.0 }
+    subscription:    { alpha: 1.5,  beta: 98.5 }
+    digital_product: { alpha: 1.0,  beta: 99.0 }
+
+# ---- Revenue stream weights (QA-016) ---------------------------------------
+revenue_stream_weights:
+  cpm_ads: 0.30
+  affiliate: 0.35
+  subscription: 0.20
+  digital_product: 0.15
+
+# ---- Risk penalty composition (DD-007) -------------------------------------
+# RiskPenalty = copyright*0.4 + controversy*0.3 + saturation*0.3
+risk_penalty:
+  copyright_risk: 0.40
+  controversy_risk: 0.30
+  saturation_risk: 0.30
+
+# ---- Time decay (DD-002 / QA-005) ------------------------------------------
+decay:
+  lambda_default: 0.09902102579    # ln(2)/7  -> 7-day half-life
+  half_life_days: 7
+  freshness_base: 0.5              # freshness_score = 0.5 ^ (age_days / 7)
+  freshness_window_days: 7
+
+# ---- Adaptive learning rate for weight updates (QA-025 / DD-002) -----------
+# W_new = clip(W_old + alpha_t * error, bounds); alpha_t = initial / sqrt(t)
+learning_rate:
+  initial: 0.01
+  schedule: inv_sqrt_t             # alpha_t = initial / sqrt(t)
+  min: 0.0001
+  optimizer: adam                  # adam-style adaptive update
+  drift_detection: true            # detect distribution drift
+
+weight_bounds:
+  min: 0.01
+  max: 10.0
+  gradient_clip: 1.0

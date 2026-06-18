@@ -1,0 +1,14 @@
+{
+  "_meta": {
+    "description": "Seed CPM values (QA-015). Live values are written to data/time_series/cpm_history.json and refreshed weekly via the Social Blade API. Currency: USD per 1000 impressions.",
+    "source": "industry_average_seed",
+    "refresh_interval": "weekly"
+  },
+  "cpm_by_platform": {
+    "blog": 4.5,
+    "youtube": 7.0,
+    "instagram": 5.5,
+    "shorts": 3.0,
+    "newsletter": 12.0
+  }
+}

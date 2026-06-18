@@ -1,0 +1,98 @@
+# =============================================================================
+# IIGP v2.0 — settings.yaml
+# Global runtime settings. References secrets via ${ENV_VAR} (resolved at load).
+# =============================================================================
+
+app:
+  name: iigp
+  version: "2.0.0"
+  env: ${APP_ENV}                  # development | staging | production
+  timezone: Asia/Seoul
+
+# ---- Logging (Layer 0 / utils/logger.py) -----------------------------------
+logging:
+  level: ${LOG_LEVEL}
+  format: json                     # structured JSON logs
+  include_trace_id: true
+  rotate_mb: 100
+  retention_days: 30
+
+# ---- Graph backend selection (DD-006 / QA-008) -----------------------------
+# Adapter chosen by `graph_backend`; migrate_graph.py promotes between phases.
+graph:
+  graph_backend: networkx          # networkx | neo4j | tigergraph
+  phase_thresholds:
+    networkx_max_nodes: 100000     # Phase 1: NetworkX + SQLite
+    neo4j_max_nodes: 1000000       # Phase 2: Neo4j Community
+    # > neo4j_max_nodes  -> Phase 3: TigerGraph / Neptune
+  wal_enabled: true                # write-ahead log for graph mutations
+  versioning:
+    enabled: true                  # QA-010: delta-based snapshots + rollback
+    keep_versions: 7               # retain last 7 snapshots
+  store_path: ./data/graph
+  centrality:
+    algorithm: pagerank            # used by compute_centrality
+    batch_schedule_cron: "0 3 * * *"   # daily batch (QA-018)
+    use_ppr_approximation: true        # Personalized PageRank approximation
+    incremental_updates: true          # ILLE incremental centrality
+
+# ---- Embeddings (QA-013 / DD-005 Layer 5) ----------------------------------
+embeddings:
+  embedding_model_version: "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+  dim: 768                         # fixed dimension
+  normalize: true
+  batch_size: 64
+  cache_dir: ./data/embeddings
+  migration_on_version_change: true
+
+# ---- NLP routing (DD-004 Layer 3) ------------------------------------------
+nlp:
+  language_detector: fasttext      # fasttext | langdetect
+  ner_models:
+    ko: klue/bert-base
+    en: dslim/bert-base-NER
+    multi: Babelscape/wikineural-multilingual-ner
+  ner_confidence_min: 0.85         # node promotion threshold
+  entity_linking: wikidata         # WikiData QID synonym merge
+  topic_model: BERTopic
+
+# ---- Datastores -------------------------------------------------------------
+datastores:
+  sqlite_path: ${SQLITE_PATH}
+  postgres_dsn: ${POSTGRES_DSN}
+  neo4j:
+    uri: ${NEO4J_URI}
+    user: ${NEO4J_USER}
+    password: ${NEO4J_PASSWORD}
+  redis_url: ${REDIS_URL}
+  vector_db_url: ${VECTOR_DB_URL}
+
+# ---- Pipeline / orchestration (DD-012 / QA-028) ----------------------------
+pipeline:
+  orchestrator: prefect            # prefect | airflow
+  max_parallel_tasks: 4            # layers 1-3 run in parallel
+  retry_attempts: 3
+  sla:
+    full_pipeline_hours: 4
+    publish_hours: 6
+  alert_channel: slack
+
+# ---- Cost / budget (GAP-006 / QA-022) --------------------------------------
+budget:
+  llm_daily_usd: ${LLM_DAILY_BUDGET_USD}
+  llm_monthly_usd: ${LLM_MONTHLY_BUDGET_USD}
+  downgrade_chain: ["gpt-4o", "gpt-4o-mini", "claude-3-haiku"]
+  hard_stop_on_exceed: true
+
+# ---- Backup / DR (QA-029) ---------------------------------------------------
+backup:
+  bucket: ${BACKUP_BUCKET}
+  schedule_cron: "0 4 * * *"       # daily snapshot
+  rto_hours: 4
+  rpo_hours: 24
+
+# ---- Cold start (QA-004) ----------------------------------------------------
+cold_start:
+  seed_nodes_path: ./data/seed/seed_nodes.json
+  seed_edges_path: ./data/seed/seed_edges.json
+  bootstrap_on_empty_graph: true

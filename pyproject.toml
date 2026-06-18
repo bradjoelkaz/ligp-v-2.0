@@ -1,0 +1,43 @@
+[project]
+name = "iigp"
+version = "2.0.0"
+description = "IIGP v2.0 — Graph-centric, probability-driven content revenue engine"
+requires-python = ">=3.11"
+readme = "README.md"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["data", ".venv", "venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "W"]
+ignore = ["E501"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+ignore_missing_imports = true
+exclude = ["data/", "tests/golden_dataset/"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra --strict-markers"
+testpaths = ["tests"]
+markers = [
+    "unit: fast isolated unit tests",
+    "integration: tests that touch external systems or multiple layers",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["scoring_engine", "decision_engine", "feedback_engine", "graph", "time_engine"]
+
+[tool.coverage.report]
+# QA-030: core models must hit 90%+ coverage.
+fail_under = 90
+show_missing = true

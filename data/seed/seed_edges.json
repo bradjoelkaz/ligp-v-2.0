@@ -1,0 +1,29 @@
+{
+  "_meta": {
+    "description": "Cold-start seed edges (QA-004). Representative sample covering every relation_type with its QA-009 default weight. The full target set (500 edges) is populated by ingestion/bootstrap_pipeline.py during Phase 1.",
+    "target_count": 500,
+    "relation_default_weights": {
+      "related_to": 0.5,
+      "causes": 0.8,
+      "similar_to": 0.4,
+      "leads_to": 0.6,
+      "monetizes_via": 0.9,
+      "triggers_emotion": 0.7,
+      "belongs_to_event": 0.65
+    }
+  },
+  "edges": [
+    { "from_node": "topic:ai", "to_node": "entity:openai", "relation_type": "related_to", "weight": 0.5 },
+    { "from_node": "topic:ai", "to_node": "entity:nvidia", "relation_type": "related_to", "weight": 0.5 },
+    { "from_node": "entity:openai", "to_node": "topic:ai", "relation_type": "similar_to", "weight": 0.4 },
+    { "from_node": "event:product_launch", "to_node": "emotion:surprise", "relation_type": "triggers_emotion", "weight": 0.7 },
+    { "from_node": "entity:openai", "to_node": "event:product_launch", "relation_type": "causes", "weight": 0.8 },
+    { "from_node": "event:product_launch", "to_node": "topic:ai", "relation_type": "belongs_to_event", "weight": 0.65 },
+    { "from_node": "topic:ai", "to_node": "product:online_course", "relation_type": "monetizes_via", "weight": 0.9 },
+    { "from_node": "topic:personal_finance", "to_node": "product:online_course", "relation_type": "monetizes_via", "weight": 0.9 },
+    { "from_node": "topic:health_wellness", "to_node": "product:affiliate_gadget", "relation_type": "monetizes_via", "weight": 0.9 },
+    { "from_node": "topic:ai", "to_node": "audience:tech_enthusiasts", "relation_type": "leads_to", "weight": 0.6 },
+    { "from_node": "audience:tech_enthusiasts", "to_node": "topic:travel", "relation_type": "related_to", "weight": 0.5 },
+    { "from_node": "topic:travel", "to_node": "emotion:surprise", "relation_type": "triggers_emotion", "weight": 0.7 }
+  ]
+}

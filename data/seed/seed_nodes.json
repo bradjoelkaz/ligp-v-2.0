@@ -1,0 +1,28 @@
+{
+  "_meta": {
+    "description": "Cold-start seed nodes (QA-004). Representative sample; the full target set (200 nodes) is populated by ingestion/bootstrap_pipeline.py during Phase 1.",
+    "target_count": 200,
+    "schema": {
+      "id": "string",
+      "type": "topic | entity | event | emotion | audience | product",
+      "name": "string",
+      "weight": "float",
+      "embedding": "vector(768) — null until feature_engine populates it",
+      "created_at": "ISO-8601 datetime"
+    }
+  },
+  "nodes": [
+    { "id": "topic:ai", "type": "topic", "name": "Artificial Intelligence", "weight": 1.0, "embedding": null, "created_at": "2026-01-01T00:00:00Z" },
+    { "id": "topic:personal_finance", "type": "topic", "name": "Personal Finance", "weight": 0.9, "embedding": null, "created_at": "2026-01-01T00:00:00Z" },
+    { "id": "topic:health_wellness", "type": "topic", "name": "Health & Wellness", "weight": 0.85, "embedding": null, "created_at": "2026-01-01T00:00:00Z" },
+    { "id": "topic:travel", "type": "topic", "name": "Travel", "weight": 0.8, "embedding": null, "created_at": "2026-01-01T00:00:00Z" },
+    { "id": "entity:openai", "type": "entity", "name": "OpenAI", "weight": 0.75, "embedding": null, "created_at": "2026-01-01T00:00:00Z" },
+    { "id": "entity:nvidia", "type": "entity", "name": "NVIDIA", "weight": 0.75, "embedding": null, "created_at": "2026-01-01T00:00:00Z" },
+    { "id": "event:product_launch", "type": "event", "name": "Major Product Launch", "weight": 0.7, "embedding": null, "created_at": "2026-01-01T00:00:00Z" },
+    { "id": "emotion:surprise", "type": "emotion", "name": "Surprise", "weight": 1.5, "embedding": null, "created_at": "2026-01-01T00:00:00Z" },
+    { "id": "emotion:fear", "type": "emotion", "name": "Fear", "weight": 1.4, "embedding": null, "created_at": "2026-01-01T00:00:00Z" },
+    { "id": "audience:tech_enthusiasts", "type": "audience", "name": "Tech Enthusiasts", "weight": 0.8, "embedding": null, "created_at": "2026-01-01T00:00:00Z" },
+    { "id": "product:online_course", "type": "product", "name": "Online Course", "weight": 0.65, "embedding": null, "created_at": "2026-01-01T00:00:00Z" },
+    { "id": "product:affiliate_gadget", "type": "product", "name": "Affiliate Gadget", "weight": 0.6, "embedding": null, "created_at": "2026-01-01T00:00:00Z" }
+  ]
+}

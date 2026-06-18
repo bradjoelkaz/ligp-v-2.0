@@ -1,0 +1,151 @@
+# =============================================================================
+# IIGP v2.0 — platforms.yaml  (DD-001 / QA-002 / QA-016)
+# Adding a new platform must require NO code change — only a new entry here.
+# Validated by a Pydantic v2 schema at load time.
+# =============================================================================
+
+defaults:
+  quota_window_sec: 86400          # 24h window
+  backoff_strategy: exponential    # exponential | linear | fibonacci
+  backoff_base_sec: 2
+  backoff_max_sec: 300
+  jitter: true
+  circuit_breaker:
+    failure_threshold: 5
+    reset_timeout_sec: 60
+
+platforms:
+  - platform_id: naver
+    type: ingestion
+    api_quota_per_day: 25000
+    quota_window_sec: 86400
+    revenue_type: [cpm_ads, affiliate]
+    backoff_strategy: exponential
+    fallback_platform: google_news
+    content_constraints:
+      max_chars: 100000
+      image_ratio: "4:3"
+      hashtag_limit: 0
+
+  - platform_id: reddit
+    type: ingestion
+    api_quota_per_day: 10000
+    quota_window_sec: 86400
+    revenue_type: [affiliate]
+    backoff_strategy: exponential
+    fallback_platform: rss
+    content_constraints:
+      max_chars: 40000
+      image_ratio: "any"
+      hashtag_limit: 0
+
+  - platform_id: youtube
+    type: both                     # ingestion + publish
+    api_quota_per_day: 10000       # YouTube Data API units
+    quota_window_sec: 86400
+    revenue_type: [cpm_ads, affiliate, subscription]
+    backoff_strategy: exponential
+    fallback_platform: rss
+    content_constraints:
+      max_chars: 5000              # description
+      title_max_chars: 100
+      image_ratio: "16:9"
+      hashtag_limit: 15
+
+  - platform_id: rss
+    type: ingestion
+    api_quota_per_day: 100000
+    quota_window_sec: 86400
+    revenue_type: []
+    backoff_strategy: linear
+    fallback_platform: null
+    content_constraints:
+      max_chars: 100000
+      image_ratio: "any"
+      hashtag_limit: 0
+
+  - platform_id: google_news
+    type: ingestion
+    api_quota_per_day: 5000
+    quota_window_sec: 86400
+    revenue_type: []
+    backoff_strategy: exponential
+    fallback_platform: rss
+    content_constraints:
+      max_chars: 100000
+      image_ratio: "any"
+      hashtag_limit: 0
+
+  - platform_id: blog
+    type: publish
+    api_quota_per_day: 1000
+    quota_window_sec: 86400
+    revenue_type: [cpm_ads, affiliate, digital_product]
+    backoff_strategy: exponential
+    fallback_platform: newsletter
+    content_constraints:
+      max_chars: 30000
+      image_ratio: "16:9"
+      hashtag_limit: 10
+      readability_target: 60       # Flesch-Kincaid (DD-010 GATE3)
+
+  - platform_id: instagram
+    type: publish
+    api_quota_per_day: 200
+    quota_window_sec: 86400
+    revenue_type: [affiliate, digital_product]
+    backoff_strategy: exponential
+    fallback_platform: null
+    content_constraints:
+      max_chars: 2200
+      image_ratio: "1:1"
+      hashtag_limit: 30
+
+  - platform_id: shorts
+    type: publish
+    api_quota_per_day: 200
+    quota_window_sec: 86400
+    revenue_type: [cpm_ads, affiliate]
+    backoff_strategy: exponential
+    fallback_platform: instagram
+    content_constraints:
+      max_chars: 200
+      video_max_sec: 60
+      image_ratio: "9:16"
+      hashtag_limit: 15
+
+  - platform_id: newsletter
+    type: publish
+    api_quota_per_day: 5000
+    quota_window_sec: 86400
+    revenue_type: [subscription, affiliate, digital_product]
+    backoff_strategy: linear
+    fallback_platform: null
+    content_constraints:
+      max_chars: 50000
+      image_ratio: "any"
+      hashtag_limit: 0
+
+  - platform_id: music
+    type: ingestion
+    api_quota_per_day: 5000
+    quota_window_sec: 86400
+    revenue_type: [digital_product]
+    backoff_strategy: exponential
+    fallback_platform: null
+    content_constraints:
+      max_chars: 2000
+      image_ratio: "1:1"
+      hashtag_limit: 10
+
+  - platform_id: ecommerce
+    type: ingestion
+    api_quota_per_day: 10000
+    quota_window_sec: 86400
+    revenue_type: [affiliate, digital_product]
+    backoff_strategy: exponential
+    fallback_platform: null
+    content_constraints:
+      max_chars: 5000
+      image_ratio: "1:1"
+      hashtag_limit: 0

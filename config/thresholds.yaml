@@ -1,0 +1,85 @@
+# =============================================================================
+# IIGP v2.0 — thresholds.yaml
+# Velocity/Acceleration states, score thresholds, dedup, quality gate criteria.
+# Refs: DD-008, DD-010, QA-006, QA-011, QA-019, QA-020, QA-021.
+# =============================================================================
+
+# ---- Trend velocity / acceleration (DD-008 / QA-011) -----------------------
+# Velocity(t)     = (Score_t - Score_t-24h) / Score_t-24h
+# Acceleration(t) = Velocity_t - Velocity_t-6h
+trend:
+  velocity_window_hours: 24
+  acceleration_window_hours: 6
+  states:
+    rising:   { velocity_gt: 0.20, acceleration_gt: 0.0 }
+    peaking:  { velocity_abs_lt: 0.05 }
+    falling:  { velocity_lt: -0.10 }
+    viral:    { velocity_gt: 1.00, alert: true }   # immediate notification
+  optimal_publish:
+    require_state: rising
+    acceleration_gt: 0.05
+
+# ---- Score gating (Layer 7-8) ----------------------------------------------
+score:
+  min_graph_score: 0.35            # below -> drop from candidate pool
+  node_promotion_min: 0.85         # NER confidence to promote to node (DD-004)
+  candidate_pool_size: 200
+
+# ---- Deduplication (QA-006) ------------------------------------------------
+dedup:
+  minhash_jaccard_min: 0.85        # MinHash LSH near-duplicate threshold
+  simhash_hamming_max: 3
+  cosine_duplicate_min: 0.92       # embedding-level duplicate
+
+# ---- Decision engine (QA-019 / QA-020 / DD-009) ----------------------------
+decision:
+  top_k: 20
+  exploration_ratio: 0.20          # Thompson Sampling 80/20 explore-exploit
+  diversity:
+    max_channels_per_topic: 2
+    topic_overlap_max: 0.40        # Markowitz constraint
+    min_diversity_index: 0.60
+
+# ---- Quality Gate (DD-010 / QA-021 — Layer 9.5) ----------------------------
+quality_gate:
+  gate1_factcheck:
+    method: bertscore
+    key_claims: 3
+    bertscore_min: 0.80
+  gate2_duplicate:
+    lookback_days: 30
+    cosine_max: 0.70
+  gate3_readability:
+    metric: flesch_kincaid
+    blog_min: 60
+  gate4_toxicity:
+    provider: perspective_api
+    toxicity_max: 0.30
+  regeneration:
+    max_attempts: 3                # then escalate to HUMAN_REVIEW queue
+    escalate_to: human_review
+  pass_targets:
+    fact_error_rate_max: 0.02
+    duplicate_publish_rate_max: 0.01
+
+# ---- LLM cost control (QA-022 / GAP-006) -----------------------------------
+cost:
+  daily_usd_limit: 50
+  token_tracker: tiktoken
+  downgrade_on_pct: 0.80           # at 80% of budget, downgrade model
+
+# ---- Attribution snapshot points (DD-011 / QA-024) -------------------------
+attribution:
+  snapshot_points: ["1h", "24h", "72h", "7d", "30d"]
+  decay_correction:
+    "1h": 0.10
+    "24h": 0.40
+    "72h": 0.75
+    "7d": 0.95
+    "30d": 1.00
+
+# ---- Ingestion health (DD-003 / QA-001) ------------------------------------
+ingestion:
+  mttr_target_sec: 60
+  dlq_max_retries: 5
+  min_daily_items: 1000

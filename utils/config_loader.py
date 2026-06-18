@@ -16,15 +16,19 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
-try:
-    import yaml
-except ImportError as exc:  # pragma: no cover - guidance for fresh checkouts
-    raise ImportError(
-        "PyYAML is required. Install dependencies with `pip install -r requirements.txt`."
-    ) from exc
-
 CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 _ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)\}")
+
+
+def _import_yaml():
+    """Import PyYAML lazily so modules can import this loader without it."""
+    try:
+        import yaml
+    except ImportError as exc:  # pragma: no cover - guidance for fresh checkouts
+        raise ImportError(
+            "PyYAML is required. Install dependencies with `pip install -r requirements.txt`."
+        ) from exc
+    return yaml
 
 
 def _load_dotenv() -> None:
@@ -63,6 +67,7 @@ def load_config(name: str, resolve_env: bool = True) -> dict[str, Any]:
     path = CONFIG_DIR / f"{name}.yaml"
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
+    yaml = _import_yaml()
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return _resolve_env(data) if resolve_env else data
 

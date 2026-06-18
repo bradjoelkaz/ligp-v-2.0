@@ -6,7 +6,9 @@ import math
 
 import pytest
 
-from utils.config_loader import load_all, load_config
+pytest.importorskip("yaml")  # config_loader requires PyYAML; skip if unavailable
+
+from utils.config_loader import load_all, load_config  # noqa: E402
 
 REQUIRED_CONFIGS = [
     "settings",

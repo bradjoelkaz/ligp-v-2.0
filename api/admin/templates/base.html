@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Admin{% endblock %} · IIGP v2.0</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface-2: #1c2330;
+      --border: #2b323d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #4f9dff;
+      --accent-2: #27c2a0;
+      --warn: #f5a623;
+      --danger: #ff5d73;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      min-height: 100vh;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    aside {
+      width: 230px;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      padding: 20px 0;
+      flex-shrink: 0;
+    }
+    .brand {
+      font-weight: 700;
+      font-size: 18px;
+      padding: 0 22px 18px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 12px;
+    }
+    .brand small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; }
+    nav a {
+      display: block;
+      padding: 11px 22px;
+      color: var(--muted);
+      border-left: 3px solid transparent;
+    }
+    nav a:hover { background: var(--surface-2); color: var(--text); }
+    nav a.active { color: var(--text); border-left-color: var(--accent); background: var(--surface-2); }
+    main { flex: 1; padding: 28px 34px; overflow-x: auto; }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    .subtitle { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 26px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+    .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    .card .value { font-size: 26px; font-weight: 700; margin-top: 6px; }
+    table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--border); font-size: 14px; }
+    th { color: var(--muted); font-weight: 600; background: var(--surface-2); }
+    tr:last-child td { border-bottom: none; }
+    .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+    .badge.draft { background: #30363d; color: var(--muted); }
+    .badge.in_review { background: rgba(245,166,35,.16); color: var(--warn); }
+    .badge.approved { background: rgba(39,194,160,.16); color: var(--accent-2); }
+    .badge.published { background: rgba(79,157,255,.16); color: var(--accent); }
+    .badge.running { background: rgba(79,157,255,.16); color: var(--accent); }
+    .badge.concluded { background: rgba(39,194,160,.16); color: var(--accent-2); }
+    .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px; margin-bottom: 20px; }
+    .panel h2 { font-size: 15px; margin: 0 0 14px; }
+    pre { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px; overflow: auto; color: var(--text); font-size: 13px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 14px; font-size: 13px; color: var(--muted); }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <aside>
+    <div class="brand">IIGP v2.0 <small>Admin · Observability</small></div>
+    <nav>
+      <a href="/admin/" class="{% if active == 'index' %}active{% endif %}">Overview</a>
+      <a href="/admin/graph" class="{% if active == 'graph' %}active{% endif %}">Graph Explorer</a>
+      <a href="/admin/content" class="{% if active == 'content' %}active{% endif %}">Content Queue</a>
+      <a href="/admin/experiments" class="{% if active == 'experiments' %}active{% endif %}">Experiments</a>
+      <a href="/admin/settings" class="{% if active == 'settings' %}active{% endif %}">Settings</a>
+    </nav>
+  </aside>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

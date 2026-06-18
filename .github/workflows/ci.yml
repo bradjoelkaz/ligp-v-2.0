@@ -6,9 +6,13 @@ on:
   pull_request:
     branches: ["main", "master"]
 
+env:
+  PYTHON_VERSION: "3.11"
+
 jobs:
-  lint-and-validate:
-    name: Lint + Config Validation
+  # ---- Job 1: lint + format + config validation ----------------------------
+  lint:
+    name: Lint + Format + Config
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,13 +20,13 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
 
-      - name: Install dependencies
+      - name: Install lint/runtime deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
 
       - name: Ruff lint
         run: ruff check .
@@ -33,5 +37,91 @@ jobs:
       - name: Validate config YAML loads
         run: python -m utils.config_loader
 
-      - name: Run tests
-        run: pytest -q
+  # ---- Job 2: unit tests + coverage ----------------------------------------
+  unit:
+    name: Unit Tests + Coverage
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run unit tests with coverage
+        run: |
+          pytest tests/unit -q \
+            --cov=api \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-fail-under=75
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: ignore
+
+  # ---- Job 3: docker image build -------------------------------------------
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: unit
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: iigp-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-test image boots
+        run: |
+          docker run -d --name iigp-ci -p 8000:8000 iigp-api:ci
+          for i in $(seq 1 20); do
+            if curl -fsS http://localhost:8000/health; then echo "OK"; break; fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8000/health
+          curl -fsS http://localhost:8000/metrics | head -n 5
+          docker rm -f iigp-ci
+
+  # ---- Job 4: integration tests --------------------------------------------
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: docker-build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run integration tests
+        run: pytest tests/integration -q

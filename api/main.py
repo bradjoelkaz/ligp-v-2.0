@@ -84,6 +84,12 @@ def create_app(**fastapi_kwargs: Any) -> FastAPI:
         allow_headers=["*"],
     )
 
+    # API key authentication (Phase 9): enforced only when API_SECRET_KEY is set;
+    # public routes (health/metrics/admin/docs) always bypass.
+    from api.middleware.auth import APIKeyMiddleware
+
+    app.add_middleware(APIKeyMiddleware)
+
     # Observability middleware (records count/latency/concurrency).
     app.add_middleware(PrometheusMiddleware)
 

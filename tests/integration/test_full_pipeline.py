@@ -1,0 +1,62 @@
+"""Integration test: full offline pipeline (Layer 15).
+
+Drives ``run_daily_pipeline`` end-to-end with mock documents and asserts at
+least one quality-checked content item is produced.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from orchestration.flows.daily_pipeline import run_daily_pipeline
+from orchestration.flows.realtime_ingestion import run_realtime_ingestion
+
+
+@pytest.mark.integration
+def test_full_pipeline_produces_content():
+    documents = [
+        {
+            "source_id": "d1",
+            "title": "OpenAI releases new model",
+            "text": "OpenAI and NVIDIA announce a major AI breakthrough in California.",
+        },
+        {
+            "source_id": "d2",
+            "title": "Markets rally on tech earnings",
+            "text": "Technology stocks surged after strong quarterly results.",
+        },
+        {
+            "source_id": "d3",
+            "title": "Travel trends for 2026",
+            "text": "Tourists flock to new destinations across Asia and Europe.",
+        },
+        # exact duplicate of d1 -> should be removed by dedup
+        {
+            "source_id": "d4",
+            "title": "OpenAI releases new model",
+            "text": "OpenAI and NVIDIA announce a major AI breakthrough in California.",
+        },
+    ]
+    summary = run_daily_pipeline(documents, platform="blog", top_k=5)
+
+    assert summary["ingested"] == 4
+    assert summary["unique"] == 3  # one duplicate removed
+    assert summary["graph_nodes"] >= 12  # seeds + new topic/entity nodes
+    assert summary["candidates"] >= 1
+    assert len(summary["generated"]) >= 1
+    # each generated item is finalized blog content
+    for item in summary["generated"]:
+        assert item["format"] == "blog"
+        assert "quality_passed" in item
+
+
+@pytest.mark.integration
+def test_realtime_ingestion_dedup():
+    docs = [
+        {"source_id": "r1", "title": "Breaking news item", "text": "something happened"},
+        {"source_id": "r2", "title": "Breaking news item", "text": "something happened"},
+        {"source_id": "r3", "title": "A different story", "text": "unrelated content here"},
+    ]
+    result = run_realtime_ingestion(docs)
+    assert result["received"] == 3
+    assert result["added"] == 2  # one duplicate filtered

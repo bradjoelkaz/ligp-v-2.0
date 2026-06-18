@@ -1,0 +1,47 @@
+"""Content API routes (Layer 14).
+
+Built with a factory so importing this module does not require FastAPI; the
+router is constructed lazily in :func:`get_router`.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from utils.logger import get_logger
+
+_log = get_logger(__name__)
+
+
+def get_router():  # pragma: no cover - requires fastapi
+    """Build and return the content APIRouter (lazy FastAPI import)."""
+    from fastapi import APIRouter, HTTPException
+    from pydantic import BaseModel
+
+    from content_factory.generators.blog_generator import BlogGenerator
+    from content_factory.quality_gate import QualityGate
+
+    router = APIRouter(prefix="/content", tags=["content"])
+    quality = QualityGate()
+
+    class GenerateRequest(BaseModel):
+        node_id: str
+        name: str = ""
+        platform: str = "blog"
+        tags: list[str] = []
+
+    @router.post("/generate")
+    def generate(req: GenerateRequest) -> dict[str, Any]:
+        content = BlogGenerator().generate(
+            {"id": req.node_id, "name": req.name or req.node_id, "tags": req.tags}, req.platform
+        )
+        passed, issues = quality.check(content, req.platform)
+        content["quality_passed"] = passed
+        content["quality_issues"] = issues
+        return content
+
+    @router.get("/{content_id}")
+    def get_content(content_id: str) -> dict[str, Any]:
+        raise HTTPException(status_code=404, detail="content store not wired in this build")
+
+    return router

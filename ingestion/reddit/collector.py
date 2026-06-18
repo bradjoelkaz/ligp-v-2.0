@@ -72,9 +72,11 @@ class RedditCollector(BaseCollector):
                     source_id=d.get("id", d.get("name", "")),
                     title=normalize_text(d.get("title", "")),
                     text=normalize_text(d.get("selftext", "")),
-                    url="https://reddit.com" + d.get("permalink", "")
-                    if d.get("permalink")
-                    else d.get("url", ""),
+                    url=(
+                        "https://reddit.com" + d.get("permalink", "")
+                        if d.get("permalink")
+                        else d.get("url", "")
+                    ),
                     author=d.get("author", ""),
                     published_at=published,
                     raw={"subreddit": d.get("subreddit", ""), "score": d.get("score", 0)},

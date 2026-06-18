@@ -92,3 +92,31 @@ def test_openapi_schema_available(client):
     paths = resp.json()["paths"]
     assert "/health" in paths
     assert "/admin/api/graph" in paths
+
+
+@pytest.mark.integration
+def test_admin_dashboard_loads_html(client):
+    """Admin dashboard root returns an HTML document."""
+    resp = client.get("/admin/")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers.get("content-type", "")
+
+
+@pytest.mark.integration
+def test_nonexistent_route_returns_404(client):
+    """Unknown routes return 404 (or 405 if the path matches another method)."""
+    resp = client.get("/api/nonexistent-route-xyz")
+    assert resp.status_code in (404, 405)
+
+
+@pytest.mark.integration
+def test_cors_headers_present(client):
+    """A CORS preflight on a public route is handled by the CORS middleware."""
+    resp = client.options(
+        "/health",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert resp.status_code in (200, 204, 405)

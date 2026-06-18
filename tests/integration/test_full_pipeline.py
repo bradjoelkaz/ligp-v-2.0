@@ -67,3 +67,42 @@ def test_realtime_ingestion_dedup():
     result = run_realtime_ingestion(docs)
     assert result["received"] == 3
     assert result["added"] == 2  # one duplicate filtered
+
+
+@pytest.mark.integration
+def test_realtime_ingestion_handles_empty_input():
+    """Empty input returns a well-formed, empty result without error."""
+    result = run_realtime_ingestion(documents=[])
+    assert result is not None
+    assert result["received"] == 0
+    assert result["added"] == 0
+
+
+@pytest.mark.integration
+def test_pipeline_handles_duplicate_documents():
+    """Duplicate documents are de-duplicated before processing."""
+    doc = {
+        "source_id": "dup-1",
+        "title": "Duplicate test",
+        "text": "Same document submitted twice for deduplication check.",
+    }
+    summary = run_daily_pipeline(documents=[doc, doc])
+    assert summary is not None
+    assert summary["ingested"] == 2
+    assert summary["unique"] == 1  # the duplicate is removed
+
+
+@pytest.mark.integration
+def test_pipeline_with_korean_content():
+    """Korean-language documents are processed end-to-end without error."""
+    documents = [
+        {
+            "source_id": "ko-1",
+            "title": "AI 기술 동향",
+            "text": "인공지능 기술이 빠르게 발전하고 있으며 산업 전반에 영향을 미치고 있다.",
+        },
+    ]
+    summary = run_daily_pipeline(documents=documents)
+    assert summary is not None
+    assert summary["ingested"] == 1
+    assert summary["graph_nodes"] >= 12  # seed nodes + the new topic node

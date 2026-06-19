@@ -24,7 +24,7 @@ class DBAdapter:
 
     def __init__(self, url: str | None = None) -> None:
         self.url = url or os.environ.get("DATABASE_URL") or "sqlite:///:memory:"
-        self.backend = "postgres" if self.url.startswith("postgresql") else "sqlite"
+        self.backend = "postgres" if self.url.startswith("postgres") else "sqlite"
         self._conn: Any | None = None
         self._in_transaction = False
 

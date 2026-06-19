@@ -87,11 +87,12 @@ def test_generate_content_task_failure_is_recorded(tmp_path, monkeypatch, eager)
     content_mod._persist_pending("cid", "[pending]", "blog")
     _stub_generation(monkeypatch, fail=True)
 
-    # _process_content swallows the error and records status=failed; the task
-    # itself completes normally (never crashes the worker).
-    tasks_mod.generate_content_task.delay("cid", {"node_id": "n", "platform": "blog"}).get(
-        timeout=5
-    )
+    # Phase 19: a non-retryable error propagates (eager_propagates) and the
+    # terminal status=failed write is owned by DatabaseAlertTask.on_failure.
+    with pytest.raises(RuntimeError):
+        tasks_mod.generate_content_task.delay("cid", {"node_id": "n", "platform": "blog"}).get(
+            timeout=5
+        )
 
     repo = _repo(url)
     try:

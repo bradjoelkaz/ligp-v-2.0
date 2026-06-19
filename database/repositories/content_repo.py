@@ -14,13 +14,21 @@ _log = get_logger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS content (
-    content_id TEXT PRIMARY KEY,
-    title      TEXT,
-    body       TEXT,
-    platform   TEXT,
-    status     TEXT,
-    payload    TEXT,
-    created_at TEXT
+    content_id    TEXT PRIMARY KEY,
+    node_id       TEXT,
+    platform      TEXT,
+    status        TEXT DEFAULT 'draft',
+    title         TEXT,
+    body          TEXT,
+    payload       TEXT,
+    tags          TEXT,
+    quality_score REAL,
+    published_url TEXT,
+    published_at  TIMESTAMP,
+    generator     TEXT,
+    llm_cost_usd  REAL DEFAULT 0.0,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 """
 

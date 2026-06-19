@@ -112,14 +112,38 @@ The compose `healthcheck` uses `/health`; dependents wait via `depends_on`.
 ### Metrics with multiple API workers
 
 `prometheus_client` keeps metrics per process. With `UVICORN_WORKERS > 1`, each
-worker has its own registry, so a single `/metrics` scrape only reflects the
-worker that served it. Options:
+worker has its own registry, so a single `/metrics` scrape would only reflect
+one worker — unless multiprocess mode is enabled.
 
-1. Run the API with `UVICORN_WORKERS=1` (default-friendly, accurate `/metrics`).
-2. Enable `prometheus_client` multiprocess mode by setting
-   `PROMETHEUS_MULTIPROC_DIR` and wiring a `MultiProcessCollector` (follow-up).
+**Multiprocess mode (implemented):** set `PROMETHEUS_MULTIPROC_DIR` to a shared,
+writable directory. When set, `api.metrics` builds an exposition registry backed
+by `prometheus_client.multiprocess.MultiProcessCollector`, and the
+`iigp_http_requests_in_progress` gauge uses `multiprocess_mode="livesum"`, so
+`/metrics` aggregates across all workers.
 
-Pipeline/business metrics are unaffected (they flow through the Pushgateway).
+> **Important — clean the dir once in the master, not per worker.**
+> `cleanup_multiprocess_dir()` clears stale `*.db` files. The app calls it on
+> lifespan startup for the single-process case, but with multiple workers each
+> worker runs lifespan and would wipe its siblings' files. Run the cleanup
+> **once before forking** instead. With Gunicorn:
+>
+> ```python
+> # gunicorn.conf.py
+> import os, shutil
+> def on_starting(server):
+>     d = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
+>     if d:
+>         shutil.rmtree(d, ignore_errors=True); os.makedirs(d, exist_ok=True)
+> def child_exit(server, worker):
+>     from prometheus_client import multiprocess
+>     multiprocess.mark_process_dead(worker.pid)
+> ```
+>
+> Leave `PROMETHEUS_MULTIPROC_DIR` unset to run a single worker with an
+> in-process registry (accurate `/metrics`, no shared dir needed).
+
+Pipeline/business metrics from the worker process are unaffected (they flow
+through the Pushgateway).
 
 ## 8. Operations
 

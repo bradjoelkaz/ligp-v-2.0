@@ -86,6 +86,7 @@ class _Metrics:
 
     def __init__(self) -> None:
         self.available = False
+        self.multiprocess = False
         self.registry: Any = None
         self._requests_total: Any = None
         self._request_duration: Any = None
@@ -117,61 +118,77 @@ class _Metrics:
             self.available = False
             return
 
-        self.registry = registry if registry is not None else CollectorRegistry()
+        multiproc_dir = os.getenv("PROMETHEUS_MULTIPROC_DIR")
+        self.multiprocess = bool(multiproc_dir)
+        if self.multiprocess:
+            from prometheus_client import multiprocess
+
+            # Ensure the shared dir exists so per-process mmap writes succeed.
+            os.makedirs(multiproc_dir, exist_ok=True)
+            # Exposition registry aggregates the per-process mmap files.
+            self.registry = CollectorRegistry()
+            multiprocess.MultiProcessCollector(self.registry)
+            # Metric objects live on a separate registry; their values are
+            # written to the shared mmap files (read back by the collector above).
+            mreg = CollectorRegistry()
+        else:
+            self.registry = registry if registry is not None else CollectorRegistry()
+            mreg = self.registry
         self._requests_total = Counter(
             "iigp_http_requests_total",
             "Total HTTP requests processed by the IIGP API.",
             labelnames=("method", "path", "status"),
-            registry=self.registry,
+            registry=mreg,
         )
         self._request_duration = Histogram(
             "iigp_http_request_duration_seconds",
             "HTTP request latency in seconds.",
             labelnames=("method", "path"),
             buckets=DEFAULT_BUCKETS,
-            registry=self.registry,
+            registry=mreg,
         )
         self._in_progress = Gauge(
             "iigp_http_requests_in_progress",
             "Number of HTTP requests currently being served.",
             labelnames=("method", "path"),
-            registry=self.registry,
+            registry=mreg,
+            multiprocess_mode="livesum",
         )
         # -- Business collectors (Phase 9) -----------------------------------
         self._graph_nodes = Gauge(
             "iigp_graph_nodes",
             "Current number of nodes in the knowledge graph.",
-            registry=self.registry,
+            registry=mreg,
         )
         self._graph_edges = Gauge(
             "iigp_graph_edges",
             "Current number of edges in the knowledge graph.",
-            registry=self.registry,
+            registry=mreg,
         )
         self._content_generated = Counter(
             "iigp_content_generated_total",
             "Content items produced by the content factory.",
             labelnames=("platform", "quality"),
-            registry=self.registry,
+            registry=mreg,
         )
         self._pipeline_runs = Counter(
             "iigp_pipeline_runs_total",
             "Pipeline runs by name and outcome.",
             labelnames=("pipeline", "status"),
-            registry=self.registry,
+            registry=mreg,
         )
         self._pipeline_duration = Histogram(
             "iigp_pipeline_duration_seconds",
             "Pipeline run duration in seconds.",
             labelnames=("pipeline",),
             buckets=PIPELINE_BUCKETS,
-            registry=self.registry,
+            registry=mreg,
         )
         self._collector_docs = Counter(
             "iigp_collector_documents_total",
             "Documents fetched by collectors, by source and outcome.",
             labelnames=("source", "status"),
-            registry=self.registry,
+            registry=mreg,
         )
         self._content_type = CONTENT_TYPE_LATEST
         self._generate_latest = generate_latest
@@ -257,6 +274,29 @@ def setup_metrics(registry: Any = None) -> _Metrics:
     """Initialise the shared metrics registry and return it (idempotent)."""
     METRICS.setup(registry)
     return METRICS
+
+
+def cleanup_multiprocess_dir() -> None:
+    """Clear stale Prometheus multiprocess mmap files (``*.db``) at startup.
+
+    No-op when ``PROMETHEUS_MULTIPROC_DIR`` is unset; creates the dir if missing.
+    Pure-stdlib and exception-safe.
+
+    NOTE: in a multi-worker deployment this must run ONCE in the master /
+    pre-fork hook (e.g. gunicorn ``on_starting``), NOT in every worker — running
+    it per worker would wipe siblings' metric files. See docs/deployment.md.
+    """
+    import glob
+
+    multiproc_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
+    if not multiproc_dir:
+        return
+    os.makedirs(multiproc_dir, exist_ok=True)
+    for filepath in glob.glob(os.path.join(multiproc_dir, "*.db")):
+        try:
+            os.remove(filepath)
+        except OSError:  # pragma: no cover - best-effort cleanup
+            pass
 
 
 def render_latest() -> tuple[bytes, str]:

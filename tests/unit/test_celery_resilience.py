@@ -65,25 +65,30 @@ def test_task_retry_configuration():
 
 
 @pytest.mark.unit
-def test_non_retryable_error_marks_failed_via_on_failure(tmp_path, monkeypatch, eager):
-    """A non-retryable error fails fast and on_failure records status=failed."""
+def test_non_retryable_error_fails_fast_without_retry(tmp_path, monkeypatch, eager):
+    """A non-retryable error propagates immediately and is NOT retried.
+
+    The terminal ``status=failed`` write is performed by ``on_failure`` in a
+    real worker; Celery's eager mode skips ``on_failure`` when
+    ``task_eager_propagates`` is set (celery/celery#3728), so that DB write is
+    covered by ``test_on_failure_hook_records_failed_directly`` instead. Here we
+    assert the fail-fast (no-retry) behaviour, which is deterministic in eager.
+    """
     url = f"sqlite:///{tmp_path / 'c.db'}"
     monkeypatch.setenv("DATABASE_URL", url)
     content_mod._persist_pending("cid", "[pending]", "blog")
     _stub_generation(monkeypatch, exc=ValueError("bad input"))
+
+    # If a retry were (wrongly) scheduled, this mock would be hit.
+    retry_mock = mock.Mock(side_effect=Retry("should-not-happen"))
+    monkeypatch.setattr(tasks_mod.generate_content_task, "retry", retry_mock)
 
     with pytest.raises(ValueError):
         tasks_mod.generate_content_task.delay("cid", {"node_id": "n", "platform": "blog"}).get(
             timeout=5
         )
 
-    repo = _repo(url)
-    try:
-        row = repo.get("cid")
-        assert row["status"] == "failed"
-        assert json.loads(row["payload"])["error"] == "bad input"
-    finally:
-        repo.db.close()
+    assert not retry_mock.called  # ValueError is not in RETRYABLE_ERRORS
 
 
 @pytest.mark.unit

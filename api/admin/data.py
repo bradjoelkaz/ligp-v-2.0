@@ -192,6 +192,34 @@ def content_queue() -> list[dict[str, Any]]:
     return items
 
 
+def content_stats() -> dict[str, Any]:
+    """Content generation stats — DB when populated, else seed fallback.
+
+    Mirrors the ``_graph_source`` DB-or-seed pattern; never raises.
+    """
+    url = os.getenv("DATABASE_URL")
+    if url:
+        try:
+            from database.db_adapter import DBAdapter
+            from database.repositories.content_repo import ContentRepository
+
+            repo = ContentRepository(DBAdapter(url))
+            try:
+                counts = repo.counts()
+            finally:
+                repo.db.close()
+            if counts["total"] > 0:
+                return counts
+        except Exception:  # noqa: BLE001 - dashboard must never 500 on DB issues
+            pass
+    # Seed fallback: derive from the representative queue.
+    items = content_queue()
+    by_status: dict[str, int] = {}
+    for item in items:
+        by_status[item["status"]] = by_status.get(item["status"], 0) + 1
+    return {"total": len(items), "by_status": dict(sorted(by_status.items()))}
+
+
 def experiment_summary() -> list[dict[str, Any]]:
     """Representative A/B experiment rows (replaced by experiments/ in Phase 5)."""
     thresholds = _safe_config("thresholds")

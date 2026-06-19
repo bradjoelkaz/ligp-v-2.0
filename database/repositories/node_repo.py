@@ -17,11 +17,17 @@ _log = get_logger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS nodes (
-    node_id   TEXT PRIMARY KEY,
-    type      TEXT,
-    name      TEXT,
-    weight    REAL,
-    embedding TEXT
+    node_id       TEXT PRIMARY KEY,
+    type          TEXT NOT NULL,
+    name          TEXT,
+    weight        REAL DEFAULT 0.0,
+    embedding     TEXT,
+    lang          TEXT DEFAULT 'ko',
+    graph_score   REAL DEFAULT 0.0,
+    revenue_score REAL DEFAULT 0.0,
+    trend_state   TEXT DEFAULT 'unknown',
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 """
 

@@ -171,3 +171,31 @@ def test_admin_node_write_requires_database_url(monkeypatch):
             headers={"X-API-Key": "secret-admin"},
         )
         assert resp.status_code == 503
+
+
+@pytest.mark.integration
+def test_content_generate_persists_and_history(tmp_path, monkeypatch):
+    """Generated content is persisted and surfaced via /content/history + stats."""
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'content.db'}")
+    with TestClient(create_app()) as c:
+        gen = c.post(
+            "/content/generate",
+            json={"node_id": "topic:ai", "name": "AI", "platform": "blog", "tags": ["ai"]},
+        )
+        assert gen.status_code == 200
+        assert "content_id" in gen.json()
+
+        history = c.get("/content/history").json()
+        assert len(history) == 1
+        assert history[0]["platform"] == "blog"
+
+        stats = c.get("/admin/api/content-stats").json()
+        assert stats["total"] == 1
+
+
+@pytest.mark.integration
+def test_content_history_empty_without_db(monkeypatch):
+    """No DATABASE_URL -> history is an empty list (no 500)."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    with TestClient(create_app()) as c:
+        assert c.get("/content/history").json() == []

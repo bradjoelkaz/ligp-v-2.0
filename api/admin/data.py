@@ -11,6 +11,7 @@ an optional dependency (PyYAML) or data file is missing.
 from __future__ import annotations
 
 import json
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -49,9 +50,39 @@ def load_seed_graph() -> dict[str, list[dict[str, Any]]]:
     return {"nodes": list(nodes), "edges": list(edges)}
 
 
+def _db_graph() -> dict[str, list[dict[str, Any]]] | None:
+    """Return the persisted graph when ``DATABASE_URL`` is set and populated.
+
+    Reads the ``graph_nodes`` / ``graph_edges`` tables via the raw-SQL
+    GraphRepository. Returns ``None`` (so callers fall back to the seed graph)
+    when no DB is configured, the tables are empty, or any error occurs — the
+    dashboard must never 500 on a database problem.
+    """
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        return None
+    try:
+        from database.db_adapter import DBAdapter
+        from database.repositories.graph_repo import GraphRepository
+
+        repo = GraphRepository(DBAdapter(url))
+        try:
+            graph = repo.as_graph()
+        finally:
+            repo.db.close()
+        return graph if graph["nodes"] else None
+    except Exception:  # noqa: BLE001 - dashboard must never 500 on DB issues
+        return None
+
+
+def _graph_source() -> dict[str, list[dict[str, Any]]]:
+    """Live persisted graph when available, otherwise the cold-start seed graph."""
+    return _db_graph() or load_seed_graph()
+
+
 def graph_payload() -> dict[str, Any]:
     """Build a D3-friendly ``{nodes, links}`` payload with colour metadata."""
-    graph = load_seed_graph()
+    graph = _graph_source()
     nodes = [
         {
             "id": n.get("id"),
@@ -76,7 +107,7 @@ def graph_payload() -> dict[str, Any]:
 
 def graph_stats() -> dict[str, Any]:
     """Summary counts for the dashboard: node/edge totals and type breakdown."""
-    graph = load_seed_graph()
+    graph = _graph_source()
     nodes, edges = graph["nodes"], graph["edges"]
     by_type: dict[str, int] = {}
     for n in nodes:
@@ -99,7 +130,7 @@ def top_revenue_paths(limit: int = 5) -> list[dict[str, Any]]:
     Replaced by the scoring_engine output once Phase 2 lands; until then this
     surfaces the highest-weight monetisation edges from the seed graph.
     """
-    graph = load_seed_graph()
+    graph = _graph_source()
     name_by_id = {n.get("id"): n.get("name", n.get("id")) for n in graph["nodes"]}
     monetizing = [e for e in graph["edges"] if e.get("relation_type") == "monetizes_via"]
     monetizing.sort(key=lambda e: float(e.get("weight", 0)), reverse=True)

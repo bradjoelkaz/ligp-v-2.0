@@ -120,3 +120,44 @@ def test_cors_headers_present(client):
         },
     )
     assert resp.status_code in (200, 204, 405)
+
+
+@pytest.mark.integration
+def test_admin_graph_write_then_read(tmp_path, monkeypatch):
+    """POST node/edge persists to the DB and is reflected by /admin/api/graph."""
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'graph.db'}")
+    with TestClient(create_app()) as c:
+        r1 = c.post(
+            "/admin/api/node",
+            json={"node_id": "t:x", "type": "topic", "name": "X", "weight": 1.0},
+        )
+        assert r1.status_code == 201
+        r2 = c.post(
+            "/admin/api/node",
+            json={"node_id": "p:y", "type": "product", "name": "Y", "weight": 0.5},
+        )
+        assert r2.status_code == 201
+        r3 = c.post(
+            "/admin/api/edge",
+            json={
+                "from_node": "t:x",
+                "to_node": "p:y",
+                "relation_type": "monetizes_via",
+                "weight": 0.8,
+            },
+        )
+        assert r3.status_code == 201
+
+        body = c.get("/admin/api/graph").json()
+        assert len(body["nodes"]) == 2
+        assert {n["id"] for n in body["nodes"]} == {"t:x", "p:y"}
+        assert len(body["links"]) == 1
+
+
+@pytest.mark.integration
+def test_admin_node_write_requires_database_url(monkeypatch):
+    """Without DATABASE_URL the write endpoint returns 503 (persistence disabled)."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    with TestClient(create_app()) as c:
+        resp = c.post("/admin/api/node", json={"node_id": "n1", "name": "N1"})
+        assert resp.status_code == 503

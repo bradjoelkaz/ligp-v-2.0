@@ -15,8 +15,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel
 
 from api.admin import data
 from api.metrics import metrics_snapshot, record_graph_size
@@ -26,6 +27,39 @@ TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 _templates: Any = None
+
+
+# Module-level request models (defined at module scope so their forward
+# references resolve during OpenAPI schema generation).
+class NodeIn(BaseModel):
+    node_id: str
+    type: str = "topic"
+    name: str = ""
+    weight: float = 1.0
+
+
+class EdgeIn(BaseModel):
+    from_node: str
+    to_node: str
+    relation_type: str = "related_to"
+    weight: float = 0.5
+
+
+def _graph_repo() -> Any:
+    """Build a GraphRepository, or 503 when no database is configured.
+
+    NOTE: the /admin surface is public in this build; graph-mutation endpoints
+    should be placed behind network ACLs or auth before production use.
+    """
+    import os
+
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        raise HTTPException(status_code=503, detail="graph persistence requires DATABASE_URL")
+    from database.db_adapter import DBAdapter
+    from database.repositories.graph_repo import GraphRepository
+
+    return GraphRepository(DBAdapter(url))
 
 
 def get_templates() -> Any:
@@ -93,3 +127,26 @@ async def api_stats() -> JSONResponse:
     # Reflect the rendered graph size into the Prometheus gauges (in-process).
     record_graph_size(stats["node_count"], stats["edge_count"])
     return JSONResponse(stats)
+
+
+# -- write endpoints (persist to graph_nodes / graph_edges) ------------------
+
+
+@router.post("/api/node", summary="Create or update a graph node")
+async def upsert_node(node: NodeIn) -> JSONResponse:
+    repo = _graph_repo()
+    try:
+        node_id = repo.upsert_node(node.node_id, node.type, node.name, node.weight)
+    finally:
+        repo.db.close()
+    return JSONResponse({"node_id": node_id}, status_code=201)
+
+
+@router.post("/api/edge", summary="Create or update a graph edge")
+async def upsert_edge(edge: EdgeIn) -> JSONResponse:
+    repo = _graph_repo()
+    try:
+        edge_id = repo.upsert_edge(edge.from_node, edge.to_node, edge.relation_type, edge.weight)
+    finally:
+        repo.db.close()
+    return JSONResponse({"edge_id": edge_id}, status_code=201)

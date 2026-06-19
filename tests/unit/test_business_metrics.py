@@ -116,10 +116,11 @@ def test_snapshot_reflects_recorded_values():
 # Pushgateway helper (Phase 9 / worker metrics)
 # --------------------------------------------------------------------------
 @pytest.mark.unit
-def test_push_metrics_returns_false_without_reachable_gateway():
-    # No prometheus_client -> False; with it but no gateway running -> also
-    # False (connection refused is swallowed). Either way it must never raise.
-    assert metrics.push_metrics(job="iigp-test", gateway="127.0.0.1:1") is False
+def test_push_metrics_returns_false_when_unavailable(monkeypatch):
+    # Force the "prometheus unavailable" branch deterministically (no network).
+    monkeypatch.setattr(metrics.METRICS, "setup", lambda *a, **k: None)
+    monkeypatch.setattr(metrics.METRICS, "available", False)
+    assert metrics.push_metrics(job="iigp-test") is False
 
 
 @pytest.mark.unit
@@ -137,3 +138,18 @@ def test_push_metrics_success_with_stubbed_gateway(monkeypatch):
     monkeypatch.setattr(prometheus_client, "push_to_gateway", _fake_push)
     assert metrics.push_metrics(job="iigp-worker", gateway="gw:9091") is True
     assert captured == {"gateway": "gw:9091", "job": "iigp-worker"}
+
+
+@pytest.mark.unit
+def test_push_metrics_swallows_gateway_errors(monkeypatch):
+    pytest.importorskip("prometheus_client")
+    import prometheus_client
+
+    metrics.METRICS.setup()
+
+    def _boom(*a, **k):
+        raise ConnectionError("gateway down")
+
+    monkeypatch.setattr(prometheus_client, "push_to_gateway", _boom)
+    # Must swallow the error and return False, never raise.
+    assert metrics.push_metrics(job="iigp-worker", gateway="gw:9091") is False

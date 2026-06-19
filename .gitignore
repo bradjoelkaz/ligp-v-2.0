@@ -50,3 +50,7 @@ logs/
 Thumbs.db
 .idea/
 .vscode/
+
+# Locust perf-smoke artifacts (CI-generated)
+tests/performance/locust-report.html
+tests/performance/locust-results*.csv

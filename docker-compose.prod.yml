@@ -31,6 +31,9 @@ services:
       # are wiped on container restart (no stale-file / permission carryover).
       PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus_multiproc
       GUNICORN_WORKERS: "${GUNICORN_WORKERS:-4}"
+      # Durable async content queue (Phase 17): publish jobs to Redis/Celery.
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
     tmpfs:
       - /tmp/prometheus_multiproc
     ports:
@@ -65,6 +68,28 @@ services:
       - db
       - redis
       - pushgateway
+    volumes:
+      - iigp_data:/app/data
+    restart: always
+
+  # Celery worker for the durable async content-generation queue (Phase 17).
+  # Same image as the API; only the entrypoint differs. Consumes jobs published
+  # by POST /content/generate and drives the DB status to completed/failed.
+  celery-worker:
+    image: iigp-api:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      target: runtime
+    command: celery -A orchestration.celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-4}
+    env_file: .env.production
+    environment:
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - iigp_data:/app/data
     restart: always

@@ -9,11 +9,14 @@ inside ``get_router``; under stringized annotations FastAPI/Pydantic cannot
 resolve the ``ForwardRef`` to that local class when building the OpenAPI schema
 (``/openapi.json``), so we keep annotations evaluated eagerly here.
 
-Async queue (Phase 11): ``POST /content/generate`` enqueues generation as a
-FastAPI BackgroundTask and returns ``{content_id, status: "pending"}``
-immediately; ``GET /content/status/{content_id}`` reports progress. Pass
-``?sync=true`` for the legacy blocking behaviour. All DB access is
-fire-and-forget (no-op without ``DATABASE_URL``; never raises into the worker).
+Async queue (Phase 11 + Phase 17): ``POST /content/generate`` enqueues
+generation and returns ``{content_id, status: "pending", queue}`` immediately;
+``GET /content/status/{content_id}`` reports progress. When a Celery broker is
+configured (``CELERY_BROKER_URL``) the job is published to the durable
+Redis-backed Celery queue (``queue="celery"``); otherwise it falls back to an
+in-process FastAPI BackgroundTask (``queue="background"``). Pass ``?sync=true``
+for the legacy blocking behaviour. All DB access is fire-and-forget (no-op
+without ``DATABASE_URL``; never raises into the worker).
 """
 
 import json
@@ -128,6 +131,26 @@ async def _generate_blocking(
     return content
 
 
+def _enqueue_celery(content_id: str, req_data: dict[str, Any]) -> bool:
+    """Publish a generation job to the Celery queue.
+
+    Returns ``True`` if the job was enqueued (Celery available and a broker is
+    configured via ``CELERY_BROKER_URL``, or eager mode is on for tests), else
+    ``False`` so the caller can fall back to in-process BackgroundTasks. Never
+    raises — a broker/connection problem must not break the request.
+    """
+    if not os.getenv("CELERY_BROKER_URL") and not os.getenv("CELERY_TASK_ALWAYS_EAGER"):
+        return False
+    try:
+        from orchestration.tasks import generate_content_task
+
+        generate_content_task.delay(content_id, req_data)
+        return True
+    except Exception:  # noqa: BLE001 - fall back to BackgroundTasks on any failure
+        _log.warning("celery_enqueue_failed_fallback", extra={"content_id": content_id})
+        return False
+
+
 def _list_history(limit: int = 50, status: str | None = None, since: str | None = None):
     """Read content history from the DB (empty list when no DB / on error)."""
     repo = _repo()
@@ -162,10 +185,15 @@ def get_router():  # pragma: no cover - requires fastapi
             return await _generate_blocking(req.node_id, req.name, req.platform, req.tags)
         content_id = str(uuid.uuid4())
         _persist_pending(content_id, f"[pending] {req.name or req.node_id}", req.platform)
-        background_tasks.add_task(
-            _process_content, content_id, req.node_id, req.name, req.platform, req.tags
-        )
-        return {"content_id": content_id, "status": "pending"}
+        # Prefer the durable Celery/Redis queue; fall back to in-process
+        # BackgroundTasks when no broker is configured (local/dev/offline).
+        req_data = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+        queued = "celery" if _enqueue_celery(content_id, req_data) else "background"
+        if queued == "background":
+            background_tasks.add_task(
+                _process_content, content_id, req.node_id, req.name, req.platform, req.tags
+            )
+        return {"content_id": content_id, "status": "pending", "queue": queued}
 
     @router.get("/history")
     async def history(

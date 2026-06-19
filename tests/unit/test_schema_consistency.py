@@ -1,15 +1,14 @@
-"""Schema-consistency tests (Phase 10 cleanup).
+"""Schema-consistency tests (Phase 10/15).
 
-Guards against the raw-SQL repositories drifting from the Alembic ``003``
-migration again. The repository columns are read from the actual SQLite table
-(PRAGMA); the migration columns are parsed from the ``003`` file *as text* so no
-SQLAlchemy import is required (it runs offline).
+Guards the raw-SQL repositories against drifting from the unified schema. The
+repository columns are read from a real SQLite table (PRAGMA) and compared to
+the canonical unified column sets. The migration (``003``) is now ALTER-based
+and validated end-to-end against PostgreSQL by
+``tests/integration/test_postgres_compatibility.py`` (alembic upgrade head +
+repo CRUD on the same tables), so we no longer parse the migration text here.
 """
 
 from __future__ import annotations
-
-import re
-from pathlib import Path
 
 import pytest
 
@@ -17,23 +16,38 @@ from database.db_adapter import DBAdapter
 from database.repositories.content_repo import ContentRepository
 from database.repositories.node_repo import NodeRepository
 
-_MIGRATION = (
-    Path(__file__).resolve().parents[2]
-    / "database"
-    / "migrations"
-    / "versions"
-    / "003_unify_schemas.py"
-)
-
-
-def _migration_columns(builder_fn: str) -> set[str]:
-    """Column names from a create-table builder function in the 003 migration."""
-    text = _MIGRATION.read_text(encoding="utf-8")
-    start = text.index(f"def {builder_fn}")
-    rest = text[start:]
-    end = rest.find("\ndef ", 1)
-    block = rest if end == -1 else rest[:end]
-    return set(re.findall(r'sa\.Column\(\s*"(\w+)"', block))
+# Canonical unified column sets (kept in lock-step with node_repo/content_repo
+# _SCHEMA and the Alembic 003 result).
+NODE_COLUMNS = {
+    "node_id",
+    "type",
+    "name",
+    "weight",
+    "embedding",
+    "lang",
+    "graph_score",
+    "revenue_score",
+    "trend_state",
+    "created_at",
+    "updated_at",
+}
+CONTENT_COLUMNS = {
+    "content_id",
+    "node_id",
+    "platform",
+    "status",
+    "title",
+    "body",
+    "payload",
+    "tags",
+    "quality_score",
+    "published_url",
+    "published_at",
+    "generator",
+    "llm_cost_usd",
+    "created_at",
+    "updated_at",
+}
 
 
 def _table_columns(repo_cls, table: str) -> set[str]:
@@ -47,23 +61,20 @@ def _table_columns(repo_cls, table: str) -> set[str]:
 
 
 @pytest.mark.unit
-def test_nodes_repo_matches_migration():
-    assert _table_columns(NodeRepository, "nodes") == _migration_columns("_create_unified_nodes")
+def test_nodes_repo_has_unified_columns():
+    assert _table_columns(NodeRepository, "nodes") == NODE_COLUMNS
 
 
 @pytest.mark.unit
-def test_content_repo_matches_migration():
-    assert _table_columns(ContentRepository, "content") == _migration_columns(
-        "_create_unified_content"
-    )
+def test_content_repo_has_unified_columns():
+    assert _table_columns(ContentRepository, "content") == CONTENT_COLUMNS
 
 
 @pytest.mark.unit
-def test_nodes_unified_columns_present():
+def test_nodes_old_001_columns_are_gone():
     cols = _table_columns(NodeRepository, "nodes")
-    assert {"name", "weight", "embedding", "lang", "graph_score", "trend_state"} <= cols
-    assert "label" not in cols  # old 001 column name is gone
-    assert "embedding_path" not in cols
+    assert "label" not in cols  # renamed -> name
+    assert "embedding_path" not in cols  # renamed -> embedding
 
 
 @pytest.mark.unit
@@ -76,7 +87,6 @@ def test_node_repo_crud_on_unified_schema(tmp_path):
         repo.upsert({"node_id": "n1", "type": "topic", "name": "A2", "weight": 2.0})  # idempotent
         got = repo.get("n1")
         assert got["name"] == "A2"
-        # New unified columns exist with defaults.
         assert got["lang"] == "ko"
         assert got["trend_state"] == "unknown"
     finally:
@@ -85,7 +95,6 @@ def test_node_repo_crud_on_unified_schema(tmp_path):
 
 @pytest.mark.unit
 def test_edges_table_not_created_by_repos():
-    # The dead 001 'edges' table must not be resurrected by any raw-SQL repo.
     db = DBAdapter("sqlite:///:memory:")
     db.connect()
     try:

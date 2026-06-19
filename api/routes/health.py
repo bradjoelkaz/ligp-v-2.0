@@ -8,14 +8,22 @@ touched. Exposes a module-level ``router`` so ``api.main`` can ``include_router`
 from __future__ import annotations
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
 router = APIRouter(tags=["system"])
 
 
-@router.get("/health", summary="Liveness probe")
-async def health() -> dict[str, str]:
-    """Liveness: the process is up and serving requests."""
-    return {"status": "ok"}
+@router.get("/health", summary="Liveness/health probe")
+async def health() -> JSONResponse:
+    """Health: process up + DB/metrics component checks.
+
+    Returns 200 when healthy (DB connected or not configured), 503 when a
+    configured database is unreachable.
+    """
+    from api.health_checks import health_report
+
+    body, healthy = health_report()
+    return JSONResponse(body, status_code=200 if healthy else 503)
 
 
 @router.get("/ready", summary="Readiness probe")

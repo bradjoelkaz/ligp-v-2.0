@@ -35,7 +35,11 @@ def test_root_returns_service_metadata(client):
 
 @pytest.mark.integration
 def test_health_and_ready_and_version(client):
-    assert client.get("/health").json() == {"status": "ok"}
+    health = client.get("/health")
+    assert health.status_code == 200
+    body = health.json()
+    assert body["status"] == "healthy"
+    assert body["components"]["database"] in ("connected", "not_configured")
 
     ready = client.get("/ready")
     assert ready.status_code == 200

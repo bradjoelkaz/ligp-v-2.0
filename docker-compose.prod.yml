@@ -1,0 +1,138 @@
+# =============================================================================
+# IIGP v2.0 — Production Docker Compose
+#
+#   cp .env.production.example .env.production
+#   # edit secrets, then:
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+#
+# Differences vs the dev compose: restart: always, no source bind-mounts
+# (image is self-contained), read-only config mounts, tuned uvicorn workers,
+# resource-friendly logging, and a strict healthcheck gating dependents.
+# =============================================================================
+name: iigp-prod
+
+services:
+  api:
+    image: iigp-api:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      target: runtime
+    command:
+      - python
+      - -m
+      - uvicorn
+      - api.main:create_app
+      - --factory
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --workers
+      - "${UVICORN_WORKERS:-2}"
+    env_file: .env.production
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      pushgateway:
+        condition: service_started
+    volumes:
+      - iigp_logs:/app/logs
+    healthcheck:
+      # Uses the enhanced /health (200 healthy, 503 when DB is down).
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: always
+
+  worker:
+    image: iigp-api:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      target: runtime
+    command: python -m orchestration.worker
+    env_file: .env.production
+    depends_on:
+      - api
+      - db
+      - redis
+      - pushgateway
+    volumes:
+      - iigp_data:/app/data
+    restart: always
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-iigp}
+      POSTGRES_USER: ${POSTGRES_USER:-iigp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-iigp} -d ${POSTGRES_DB:-iigp}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: always
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru --save 60 1
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: always
+
+  pushgateway:
+    image: prom/pushgateway:v1.9.0
+    restart: always
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    depends_on:
+      - api
+      - pushgateway
+    restart: always
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?set GRAFANA_PASSWORD in .env.production}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: always
+
+volumes:
+  iigp_data:
+  iigp_logs:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:

@@ -107,7 +107,7 @@ def client():
 
 @pytest.mark.unit
 def test_system_endpoints(client):
-    assert client.get("/health").json() == {"status": "ok"}
+    assert client.get("/health").json()["status"] == "healthy"
     assert client.get("/ready").status_code == 200
     assert client.get("/version").status_code == 200
     assert client.get("/").json()["service"] == "iigp"

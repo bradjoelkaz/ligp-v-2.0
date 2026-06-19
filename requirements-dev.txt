@@ -37,6 +37,10 @@ mypy>=1.10
 
 # ---- PostgreSQL compatibility (Phase 15, CI integration) --------------------
 # psycopg3 to match the DBAdapter (`import psycopg`) and production requirements.
-psycopg[binary]>=3.1
+# The `pool` extra provides psycopg_pool.ConnectionPool (Phase 18 pooling).
+psycopg[binary,pool]>=3.1
 SQLAlchemy>=2.0       # alembic migrations during the postgres compat test
 alembic>=1.13
+
+# ---- Load testing (Phase 18, manual/headless; not collected by pytest) ------
+locust>=2.29

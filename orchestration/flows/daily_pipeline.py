@@ -19,6 +19,7 @@ from decision_engine.selector import ThompsonSelector
 from graph.graph_store import Edge, InMemoryGraphStore, Node
 from ingestion.bootstrap_pipeline import bootstrap
 from nlp.entity_extractor import EntityExtractor
+from orchestration.hooks.graph_persist import persist_graph_to_db
 from processing.deduplicator import Deduplicator
 from processing.language_detector import detect_language
 from scoring_engine.graph_score import GraphScoreComputer
@@ -124,6 +125,8 @@ def _run_daily_pipeline(
         outputs.append(content)
 
     metrics.record_graph_size(store.num_nodes(), store.num_edges())
+    # Fire-and-forget: persist the graph to the DB when configured (no-op/safe).
+    persist_graph_to_db(store)
     summary = {
         "ingested": len(documents),
         "unique": len(unique),

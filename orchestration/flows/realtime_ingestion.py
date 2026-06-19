@@ -12,6 +12,7 @@ from typing import Any
 
 from api import metrics
 from graph.graph_store import GraphStore, InMemoryGraphStore, Node
+from orchestration.hooks.graph_persist import persist_graph_to_db
 from processing.deduplicator import Deduplicator
 from utils.helpers import make_node_id
 from utils.logger import get_logger
@@ -44,6 +45,7 @@ def run_realtime_ingestion(
             store.add_node(Node(id=make_node_id("topic", topic), type="topic", name=topic))
             added += 1
         metrics.record_graph_size(store.num_nodes(), store.num_edges())
+        persist_graph_to_db(store)
         status = "success"
         return {"received": len(documents), "added": added, "graph_nodes": store.num_nodes()}
     finally:

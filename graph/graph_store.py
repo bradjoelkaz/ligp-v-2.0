@@ -73,6 +73,12 @@ class GraphStore(abc.ABC):
     @abc.abstractmethod
     def num_edges(self) -> int: ...
 
+    @abc.abstractmethod
+    def list_nodes(self) -> list[dict[str, Any]]: ...
+
+    @abc.abstractmethod
+    def list_edges(self) -> list[dict[str, Any]]: ...
+
 
 class InMemoryGraphStore(GraphStore):
     """Pure-Python adjacency-list backend (Phase 1 default for tests/small graphs)."""
@@ -145,6 +151,24 @@ class InMemoryGraphStore(GraphStore):
     def num_edges(self) -> int:
         return sum(len(v) for v in self._adj.values())
 
+    def list_nodes(self) -> list[dict[str, Any]]:
+        return [
+            {"id": n.id, "type": n.type, "name": n.name, "weight": n.weight}
+            for n in self._nodes.values()
+        ]
+
+    def list_edges(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "from_node": e.from_node,
+                "to_node": e.to_node,
+                "relation_type": e.relation_type,
+                "weight": e.weight,
+            }
+            for edges in self._adj.values()
+            for e in edges
+        ]
+
 
 class NetworkXGraphStore(GraphStore):
     """NetworkX-backed store for Phase 1 graphs up to ~100k nodes (DD-006)."""
@@ -184,6 +208,26 @@ class NetworkXGraphStore(GraphStore):
 
     def num_edges(self) -> int:
         return self._g.number_of_edges()
+
+    def list_nodes(self) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for nid, data in self._g.nodes(data=True):
+            obj = data.get("obj")
+            if obj is None:
+                continue
+            out.append({"id": nid, "type": obj.type, "name": obj.name, "weight": obj.weight})
+        return out
+
+    def list_edges(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "from_node": u,
+                "to_node": v,
+                "relation_type": d.get("relation", "related_to"),
+                "weight": d.get("weight", 0.5),
+            }
+            for u, v, d in self._g.edges(data=True)
+        ]
 
 
 def get_graph_store(backend: str = "networkx") -> GraphStore:

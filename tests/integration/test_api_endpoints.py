@@ -199,3 +199,43 @@ def test_content_history_empty_without_db(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     with TestClient(create_app()) as c:
         assert c.get("/content/history").json() == []
+
+
+@pytest.mark.integration
+def test_generate_async_returns_pending_then_completes(tmp_path, monkeypatch):
+    """POST /generate returns pending immediately; the background task completes it."""
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'q.db'}")
+    with TestClient(create_app()) as c:
+        resp = c.post("/content/generate", json={"node_id": "topic:ai", "name": "AI"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "pending"
+        cid = body["content_id"]
+        # TestClient runs the background task, so status should be resolved now.
+        status = c.get(f"/content/status/{cid}").json()
+        assert status["status"] in ("completed", "processing", "pending")
+
+
+@pytest.mark.integration
+def test_generate_sync_flag_returns_content(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'q.db'}")
+    with TestClient(create_app()) as c:
+        resp = c.post("/content/generate?sync=true", json={"node_id": "topic:ai", "name": "AI"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "content_id" in body
+        assert "title" in body and "body" in body
+
+
+@pytest.mark.integration
+def test_content_status_not_found(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'q.db'}")
+    with TestClient(create_app()) as c:
+        assert c.get("/content/status/does-not-exist").status_code == 404
+
+
+@pytest.mark.integration
+def test_content_status_requires_db(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    with TestClient(create_app()) as c:
+        assert c.get("/content/status/x").status_code == 503

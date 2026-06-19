@@ -67,8 +67,24 @@ class ContentRepository:
             (status, limit),
         )
 
-    def update_status(self, content_id: str, status: str) -> None:
-        self.db.execute("UPDATE content SET status = ? WHERE content_id = ?", (status, content_id))
+    def update_status(
+        self,
+        content_id: str,
+        status: str,
+        result: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Update status; optionally store a result/error JSON into ``payload``.
+
+        ``payload`` is only overwritten when ``result`` or ``error`` is provided
+        (COALESCE keeps the existing payload otherwise), so plain status updates
+        remain non-destructive.
+        """
+        self.db.execute(
+            "UPDATE content SET status = ?, payload = COALESCE(?, payload), "
+            "updated_at = CURRENT_TIMESTAMP WHERE content_id = ?",
+            (status, result if result is not None else error, content_id),
+        )
 
     def list_content(
         self, limit: int = 50, status: str | None = None, since: str | None = None

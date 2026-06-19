@@ -2,9 +2,13 @@
 
 Built with a factory so importing this module does not require FastAPI; the
 router is constructed lazily in :func:`get_router`.
-"""
 
-from __future__ import annotations
+NOTE: this module intentionally does NOT use ``from __future__ import
+annotations``. The request body model (``GenerateRequest``) is defined locally
+inside ``get_router``; under stringized annotations FastAPI/Pydantic cannot
+resolve the ``ForwardRef`` to that local class when building the OpenAPI schema
+(``/openapi.json``), so we keep annotations evaluated eagerly here.
+"""
 
 from typing import Any
 

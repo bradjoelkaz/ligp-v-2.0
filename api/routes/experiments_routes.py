@@ -1,6 +1,10 @@
-"""Experiments API routes (Layer 14). Lazy FastAPI via factory."""
+"""Experiments API routes (Layer 14). Lazy FastAPI via factory.
 
-from __future__ import annotations
+NOTE: no ``from __future__ import annotations`` here on purpose. The request
+body model (``CreateRequest``) is defined locally inside ``get_router``; under
+stringized annotations FastAPI/Pydantic cannot resolve the ``ForwardRef`` to
+that local class during OpenAPI schema generation.
+"""
 
 from typing import Any
 

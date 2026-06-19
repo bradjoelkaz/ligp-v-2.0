@@ -110,3 +110,30 @@ def test_snapshot_reflects_recorded_values():
     assert snap["graph_edges"] == 4.0
     assert snap["content_generated_total"] == 1.0
     assert snap["pipeline_runs_total"] == 1.0
+
+
+# --------------------------------------------------------------------------
+# Pushgateway helper (Phase 9 / worker metrics)
+# --------------------------------------------------------------------------
+@pytest.mark.unit
+def test_push_metrics_returns_false_without_reachable_gateway():
+    # No prometheus_client -> False; with it but no gateway running -> also
+    # False (connection refused is swallowed). Either way it must never raise.
+    assert metrics.push_metrics(job="iigp-test", gateway="127.0.0.1:1") is False
+
+
+@pytest.mark.unit
+def test_push_metrics_success_with_stubbed_gateway(monkeypatch):
+    pytest.importorskip("prometheus_client")
+    import prometheus_client
+
+    metrics.METRICS.setup()
+    captured: dict[str, object] = {}
+
+    def _fake_push(gateway, job, registry, grouping_key=None):
+        captured["gateway"] = gateway
+        captured["job"] = job
+
+    monkeypatch.setattr(prometheus_client, "push_to_gateway", _fake_push)
+    assert metrics.push_metrics(job="iigp-worker", gateway="gw:9091") is True
+    assert captured == {"gateway": "gw:9091", "job": "iigp-worker"}

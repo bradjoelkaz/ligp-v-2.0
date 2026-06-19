@@ -51,7 +51,9 @@ def run_realtime_ingestion(
 
 
 def realtime_ingestion() -> dict[str, Any]:  # pragma: no cover - requires prefect
-    """Prefect flow wrapper for the real-time ingestion cadence."""
+    """Prefect flow wrapper for the real-time ingestion cadence (pushes metrics)."""
+    from api.metrics import push_metrics
+
     try:
         from prefect import flow
 
@@ -59,6 +61,8 @@ def realtime_ingestion() -> dict[str, Any]:  # pragma: no cover - requires prefe
         def _flow() -> dict[str, Any]:
             return run_realtime_ingestion([])
 
-        return _flow()
+        result = _flow()
     except Exception:
-        return run_realtime_ingestion([])
+        result = run_realtime_ingestion([])
+    push_metrics(job="iigp-realtime-ingestion")
+    return result

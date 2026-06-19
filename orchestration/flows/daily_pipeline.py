@@ -140,7 +140,9 @@ def _run_daily_pipeline(
 
 
 def daily_pipeline() -> dict[str, Any]:  # pragma: no cover - requires prefect + collectors
-    """Prefect flow wrapper. Collects live data, then runs the pipeline."""
+    """Prefect flow wrapper. Collects live data, runs the pipeline, pushes metrics."""
+    from api.metrics import push_metrics
+
     try:
         from prefect import flow
 
@@ -148,9 +150,11 @@ def daily_pipeline() -> dict[str, Any]:  # pragma: no cover - requires prefect +
         def _flow() -> dict[str, Any]:
             return run_daily_pipeline(_collect_live())
 
-        return _flow()
+        result = _flow()
     except Exception:
-        return run_daily_pipeline(_collect_live())
+        result = run_daily_pipeline(_collect_live())
+    push_metrics(job="iigp-daily-pipeline")
+    return result
 
 
 def _collect_live() -> list[dict[str, Any]]:  # pragma: no cover - network

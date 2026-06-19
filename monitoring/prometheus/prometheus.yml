@@ -17,3 +17,12 @@ scrape_configs:
       - targets: ["api:8000"]
         labels:
           service: iigp-api
+
+  # Pushgateway: batch/worker processes push their metrics here. honor_labels
+  # keeps the job/instance labels set by the pushing client (the worker).
+  - job_name: pushgateway
+    honor_labels: true
+    static_configs:
+      - targets: ["pushgateway:9091"]
+        labels:
+          service: iigp-pushgateway

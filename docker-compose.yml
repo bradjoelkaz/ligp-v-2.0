@@ -8,6 +8,7 @@
 #   API        -> http://localhost:8000   (admin: /admin/, metrics: /metrics)
 #   Prefect    -> http://localhost:4200
 #   Prometheus -> http://localhost:9090
+#   Pushgateway-> http://localhost:9091   (worker/batch metrics)
 #   Grafana    -> http://localhost:3000   (admin / admin)
 # =============================================================================
 name: iigp
@@ -49,11 +50,13 @@ services:
     environment:
       DATABASE_URL: postgresql://iigp:${POSTGRES_PASSWORD:-changeme}@db:5432/iigp
       REDIS_URL: redis://redis:6379/0
+      PUSHGATEWAY_URL: pushgateway:9091
       APP_ENV: staging
     depends_on:
       - api
       - db
       - redis
+      - pushgateway
     volumes:
       - iigp_data:/app/data
     restart: unless-stopped
@@ -109,6 +112,16 @@ services:
     networks:
       - iigp-net
 
+  # -- Pushgateway (batch/worker metrics) -------------------------------------
+  pushgateway:
+    image: prom/pushgateway:v1.9.0
+    container_name: iigp-pushgateway
+    ports:
+      - "9091:9091"
+    restart: unless-stopped
+    networks:
+      - iigp-net
+
   # -- Prometheus (scrapes the API /metrics endpoint) -------------------------
   prometheus:
     image: prom/prometheus:v2.53.0
@@ -123,6 +136,7 @@ services:
       - "--storage.tsdb.path=/prometheus"
     depends_on:
       - api
+      - pushgateway
     restart: unless-stopped
     networks:
       - iigp-net

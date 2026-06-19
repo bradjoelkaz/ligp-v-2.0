@@ -31,6 +31,7 @@ the API routes and the integration tests.
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -298,6 +299,42 @@ def metrics_snapshot() -> dict[str, float]:
     """Return live scalar values of key metrics for the admin dashboard."""
     _ensure()
     return METRICS.snapshot()
+
+
+def push_metrics(
+    job: str = "iigp-worker",
+    gateway: str | None = None,
+    grouping_key: dict[str, str] | None = None,
+) -> bool:
+    """Push the current registry to a Prometheus Pushgateway.
+
+    Long-running / batch worker processes cannot be scraped directly, so they
+    push their metrics to a Pushgateway that Prometheus scrapes instead. The
+    gateway address defaults to ``$PUSHGATEWAY_URL`` (or ``localhost:9091``).
+
+    Returns ``True`` on success. Never raises: missing ``prometheus_client`` or
+    an unreachable gateway are swallowed so a metrics failure can never crash
+    the worker.
+    """
+    _ensure()
+    if not METRICS.available:
+        return False
+    try:
+        from prometheus_client import push_to_gateway
+
+        gw = gateway or os.getenv("PUSHGATEWAY_URL", "localhost:9091")
+        push_to_gateway(gw, job=job, registry=METRICS.registry, grouping_key=grouping_key)
+        return True
+    except Exception as exc:  # noqa: BLE001 - metrics must never crash the worker
+        try:
+            from utils.logger import get_logger
+
+            get_logger("iigp.metrics").warning(
+                "pushgateway_push_failed", extra={"error": str(exc), "job": job}
+            )
+        except Exception:  # pragma: no cover - logging must not raise
+            pass
+        return False
 
 
 def normalize_path(scope: Scope) -> str:

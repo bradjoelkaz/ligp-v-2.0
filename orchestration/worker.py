@@ -38,6 +38,7 @@ def _polling_loop() -> None:
     """Simple polling loop used when Prefect is unavailable (dev mode)."""
     import time
 
+    from api.metrics import push_metrics
     from orchestration.flows.daily_pipeline import run_daily_pipeline
 
     logger.info("polling_loop_started")
@@ -46,6 +47,8 @@ def _polling_loop() -> None:
             run_daily_pipeline([])
         except Exception as exc:  # noqa: BLE001
             logger.error("pipeline_run_failed", extra={"error": str(exc)})
+        # Push metrics to the gateway regardless of success/failure.
+        push_metrics(job="iigp-daily-pipeline")
         time.sleep(600)  # 10 minutes
 
 

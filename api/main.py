@@ -55,6 +55,10 @@ def _cors_origins() -> list[str]:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: initialise observability on startup, clean up on exit."""
     # Clear stale multiprocess metric files before collectors are created.
+    # In a Gunicorn multi-worker deployment this same cleanup is performed ONCE
+    # in the master via the ``on_starting`` hook (see gunicorn.conf.py); here it
+    # covers the single-process path (uvicorn direct run / local dev / tests),
+    # where it is a safe no-op unless PROMETHEUS_MULTIPROC_DIR is set.
     try:
         cleanup_multiprocess_dir()
     except Exception as exc:  # noqa: BLE001 - never block startup on cleanup

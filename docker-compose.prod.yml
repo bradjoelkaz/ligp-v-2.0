@@ -18,18 +18,21 @@ services:
       context: .
       target: runtime
     command:
-      - python
-      - -m
-      - uvicorn
+      - gunicorn
+      - -c
+      - gunicorn.conf.py
       - api.main:create_app
       - --factory
-      - --host
-      - "0.0.0.0"
-      - --port
-      - "8000"
-      - --workers
-      - "${UVICORN_WORKERS:-2}"
     env_file: .env.production
+    environment:
+      # Prometheus multiprocess aggregation: workers write per-PID mmap files
+      # here; the master cleans/marks them via gunicorn on_starting/child_exit.
+      # Backed by tmpfs below so the *.db files never touch the host disk and
+      # are wiped on container restart (no stale-file / permission carryover).
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus_multiproc
+      GUNICORN_WORKERS: "${GUNICORN_WORKERS:-4}"
+    tmpfs:
+      - /tmp/prometheus_multiproc
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:

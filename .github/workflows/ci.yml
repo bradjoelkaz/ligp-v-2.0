@@ -132,5 +132,5 @@ jobs:
           pip install -r requirements-dev.txt
           pip install -e . 2>/dev/null || true
 
-      - name: Run integration tests
-        run: pytest tests/integration -q
+      - name: Run integration + e2e tests
+        run: pytest tests/integration tests/e2e -q

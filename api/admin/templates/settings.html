@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+  <h1>Settings</h1>
+  <p class="subtitle">Read-only, secret-free snapshot of validated configuration</p>
+
+  <div class="cards">
+    <div class="card">
+      <div class="label">Graph Backend</div>
+      <div class="value">{{ settings.graph_backend or "—" }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Embedding Dim</div>
+      <div class="value">{{ settings.embedding_dim or "—" }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Orchestrator</div>
+      <div class="value">{{ settings.orchestrator or "—" }}</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>GraphScore weights (sum = 1.0)</h2>
+    <table>
+      <thead><tr><th>Component</th><th>Weight</th></tr></thead>
+      <tbody>
+        {% for k, v in (settings.graph_score_weights or {}).items() %}
+        <tr><td>{{ k }}</td><td>{{ v }}</td></tr>
+        {% else %}
+        <tr><td colspan="2">Config unavailable.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h2>Revenue stream weights</h2>
+    <table>
+      <thead><tr><th>Stream</th><th>Weight</th></tr></thead>
+      <tbody>
+        {% for k, v in (settings.revenue_stream_weights or {}).items() %}
+        <tr><td>{{ k }}</td><td>{{ v }}</td></tr>
+        {% else %}
+        <tr><td colspan="2">Config unavailable.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

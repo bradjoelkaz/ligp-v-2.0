@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Experiments{% endblock %}
+{% block content %}
+  <h1>A/B Experiments</h1>
+  <p class="subtitle">Variant routing &amp; statistical significance (Phase 5)</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Experiment</th><th>Variant A</th><th>Variant B</th>
+        <th>Impressions</th><th>CTR A</th><th>CTR B</th><th>&alpha;</th><th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in experiments %}
+      <tr>
+        <td>{{ e.experiment_id }}</td>
+        <td>{{ e.variant_a }}</td>
+        <td>{{ e.variant_b }}</td>
+        <td>{{ "{:,}".format(e.impressions) }}</td>
+        <td>{{ "%.1f%%"|format(e.ctr_a * 100) }}</td>
+        <td>{{ "%.1f%%"|format(e.ctr_b * 100) }}</td>
+        <td>{{ e.significance_level }}</td>
+        <td><span class="badge {{ e.status }}">{{ e.status }}</span></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8">No experiments configured.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

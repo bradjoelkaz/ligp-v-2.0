@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Content Queue{% endblock %}
+{% block content %}
+  <h1>Content Queue</h1>
+  <p class="subtitle">Content-factory review queue · quality gate (DD-010)</p>
+
+  <table>
+    <thead>
+      <tr><th>ID</th><th>Title</th><th>Channel</th><th>Quality</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+      <tr>
+        <td>{{ item.id }}</td>
+        <td>{{ item.title }}</td>
+        <td>{{ item.channel }}</td>
+        <td>{{ "%.3f"|format(item.quality_score) }}</td>
+        <td><span class="badge {{ item.status }}">{{ item.status }}</span></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5">Queue is empty.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

@@ -1,0 +1,175 @@
+# =============================================================================
+# IIGP v2.0 — Docker Compose (dev/staging)
+# Usage: cp .env.example .env && docker-compose up -d
+#
+# Application stack : api, worker, db (postgres), redis, prefect
+# Observability     : prometheus (scrapes api:/metrics), grafana (dashboards)
+#
+#   API        -> http://localhost:8000   (admin: /admin/, metrics: /metrics)
+#   Prefect    -> http://localhost:4200
+#   Prometheus -> http://localhost:9090
+#   Pushgateway-> http://localhost:9091   (worker/batch metrics)
+#   Grafana    -> http://localhost:3000   (admin / admin)
+# =============================================================================
+name: iigp
+
+services:
+  # -- API server -------------------------------------------------------------
+  api:
+    build:
+      context: .
+      target: runtime
+    container_name: iigp-api
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://iigp:${POSTGRES_PASSWORD:-changeme}@db:5432/iigp
+      REDIS_URL: redis://redis:6379/0
+      APP_ENV: staging
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - iigp_data:/app/data
+      - iigp_logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - iigp-net
+
+  # -- Background worker ------------------------------------------------------
+  worker:
+    build:
+      context: .
+      target: runtime
+    container_name: iigp-worker
+    command: python -m orchestration.worker
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://iigp:${POSTGRES_PASSWORD:-changeme}@db:5432/iigp
+      REDIS_URL: redis://redis:6379/0
+      PUSHGATEWAY_URL: pushgateway:9091
+      APP_ENV: staging
+    depends_on:
+      - api
+      - db
+      - redis
+      - pushgateway
+    volumes:
+      - iigp_data:/app/data
+    restart: unless-stopped
+    networks:
+      - iigp-net
+
+  # -- PostgreSQL -------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: iigp-db
+    environment:
+      POSTGRES_DB: iigp
+      POSTGRES_USER: iigp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iigp -d iigp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - iigp-net
+
+  # -- Redis ------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: iigp-redis
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru --save 60 1
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - iigp-net
+
+  # -- Prefect orchestration server -------------------------------------------
+  prefect:
+    image: prefecthq/prefect:3-python3.11
+    container_name: iigp-prefect
+    command: prefect server start --host 0.0.0.0 --port 4200
+    ports:
+      - "4200:4200"
+    environment:
+      PREFECT_API_DATABASE_CONNECTION_URL: "sqlite+aiosqlite:///prefect.db"
+      PREFECT_UI_API_URL: http://localhost:4200/api
+    volumes:
+      - prefect_data:/root/.prefect
+    networks:
+      - iigp-net
+
+  # -- Pushgateway (batch/worker metrics) -------------------------------------
+  pushgateway:
+    image: prom/pushgateway:v1.9.0
+    container_name: iigp-pushgateway
+    ports:
+      - "9091:9091"
+    restart: unless-stopped
+    networks:
+      - iigp-net
+
+  # -- Prometheus (scrapes the API /metrics endpoint) -------------------------
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: iigp-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    depends_on:
+      - api
+      - pushgateway
+    restart: unless-stopped
+    networks:
+      - iigp-net
+
+  # -- Grafana (pre-provisioned Prometheus datasource + dashboard) ------------
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: iigp-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - iigp-net
+
+volumes:
+  iigp_data:
+  iigp_logs:
+  postgres_data:
+  redis_data:
+  prefect_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  iigp-net:
+    driver: bridge

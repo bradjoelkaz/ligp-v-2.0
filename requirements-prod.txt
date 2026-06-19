@@ -1,0 +1,21 @@
+# =============================================================================
+# IIGP v2.0 — Production runtime dependencies (API + worker container).
+# Slim by design: the heavy ML/data libs in requirements.txt are only needed
+# for offline pipeline jobs, NOT for serving the API. Keeping this lean makes
+# the Docker image small and the CI docker-build job fast and reliable.
+# Heavy libs (torch/prophet/transformers/cvxpy/...) are lazy-imported and only
+# required by the full ingestion/scoring pipeline, installed separately there.
+# =============================================================================
+fastapi>=0.111
+uvicorn[standard]>=0.30
+pydantic>=2.7
+jinja2>=3.1
+httpx>=0.27
+PyYAML>=6.0
+orjson>=3.10
+SQLAlchemy>=2.0
+alembic>=1.13
+redis>=5.0
+prometheus-client>=0.20
+openai>=1.30
+python-dotenv>=1.0

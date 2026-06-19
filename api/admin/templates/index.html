@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Overview{% endblock %}
+{% block content %}
+  <h1>Overview</h1>
+  <p class="subtitle">{{ summary.app_name }} v{{ summary.app_version }} · {{ summary.phase }}</p>
+
+  <div class="cards">
+    <div class="card">
+      <div class="label">Graph Nodes</div>
+      <div class="value">{{ summary.node_count }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Graph Edges</div>
+      <div class="value">{{ summary.edge_count }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Graph Backend</div>
+      <div class="value">{{ summary.graph_backend }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Version</div>
+      <div class="value">{{ summary.app_version }}</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Operational metrics (live)</h2>
+    <div class="cards">
+      <div class="card">
+        <div class="label">HTTP Requests</div>
+        <div class="value">{{ live.http_requests_total | int }}</div>
+      </div>
+      <div class="card">
+        <div class="label">In Progress</div>
+        <div class="value">{{ live.http_requests_in_progress | int }}</div>
+      </div>
+      <div class="card">
+        <div class="label">Content Generated</div>
+        <div class="value">{{ live.content_generated_total | int }}</div>
+      </div>
+      <div class="card">
+        <div class="label">Pipeline Runs</div>
+        <div class="value">{{ live.pipeline_runs_total | int }}</div>
+      </div>
+      <div class="card">
+        <div class="label">Graph Nodes (gauge)</div>
+        <div class="value">{{ live.graph_nodes | int }}</div>
+      </div>
+    </div>
+    <p class="subtitle" style="margin:10px 0 0;">
+      Live in-process values from the Prometheus registry. Worker-process pipeline
+      metrics are exposed separately (see /metrics).
+    </p>
+  </div>
+
+  <div class="panel">
+    <h2>Nodes by type</h2>
+    <table>
+      <thead><tr><th>Type</th><th>Count</th></tr></thead>
+      <tbody>
+        {% for t, c in stats.nodes_by_type.items() %}
+        <tr><td>{{ t }}</td><td>{{ c }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h2>Top revenue paths (monetizes_via)</h2>
+    <table>
+      <thead><tr><th>Source</th><th>Target</th><th>Weight</th></tr></thead>
+      <tbody>
+        {% for p in revenue_paths %}
+        <tr><td>{{ p.source }}</td><td>{{ p.target }}</td><td>{{ "%.2f"|format(p.weight) }}</td></tr>
+        {% else %}
+        <tr><td colspan="3">No monetisation paths in seed graph.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

@@ -23,7 +23,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
-from api.metrics import PrometheusMiddleware, render_latest, setup_metrics
+from api.metrics import (
+    PrometheusMiddleware,
+    cleanup_multiprocess_dir,
+    render_latest,
+    setup_metrics,
+)
 from utils.logger import get_logger
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -49,6 +54,11 @@ def _cors_origins() -> list[str]:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: initialise observability on startup, clean up on exit."""
+    # Clear stale multiprocess metric files before collectors are created.
+    try:
+        cleanup_multiprocess_dir()
+    except Exception as exc:  # noqa: BLE001 - never block startup on cleanup
+        _log.warning("multiproc_cleanup_failed", extra={"error": str(exc)})
     setup_metrics()
     _log.info("IIGP API starting up (metrics initialised)")
     try:

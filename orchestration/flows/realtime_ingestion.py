@@ -7,8 +7,10 @@ Prefect wrapper.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
+from api import metrics
 from graph.graph_store import GraphStore, InMemoryGraphStore, Node
 from processing.deduplicator import Deduplicator
 from utils.helpers import make_node_id
@@ -22,19 +24,30 @@ def run_realtime_ingestion(
     store: GraphStore | None = None,
     dedup: Deduplicator | None = None,
 ) -> dict[str, Any]:
-    """Deduplicate incoming docs and upsert topic nodes into ``store``."""
-    store = store or InMemoryGraphStore()
-    dedup = dedup or Deduplicator()
-    added = 0
-    for i, doc in enumerate(documents):
-        key = doc.get("source_id", f"rt{i}")
-        text = f"{doc.get('title', '')} {doc.get('text', '')}"
-        if dedup.is_duplicate(key, text):
-            continue
-        topic = doc.get("title", "untitled")
-        store.add_node(Node(id=make_node_id("topic", topic), type="topic", name=topic))
-        added += 1
-    return {"received": len(documents), "added": added, "graph_nodes": store.num_nodes()}
+    """Deduplicate incoming docs and upsert topic nodes into ``store``.
+
+    Records ``iigp_pipeline_runs_total`` / ``iigp_pipeline_duration_seconds``
+    (pipeline="realtime") and the resulting graph size.
+    """
+    start = time.perf_counter()
+    status = "error"
+    try:
+        store = store or InMemoryGraphStore()
+        dedup = dedup or Deduplicator()
+        added = 0
+        for i, doc in enumerate(documents):
+            key = doc.get("source_id", f"rt{i}")
+            text = f"{doc.get('title', '')} {doc.get('text', '')}"
+            if dedup.is_duplicate(key, text):
+                continue
+            topic = doc.get("title", "untitled")
+            store.add_node(Node(id=make_node_id("topic", topic), type="topic", name=topic))
+            added += 1
+        metrics.record_graph_size(store.num_nodes(), store.num_edges())
+        status = "success"
+        return {"received": len(documents), "added": added, "graph_nodes": store.num_nodes()}
+    finally:
+        metrics.record_pipeline_run("realtime", status, time.perf_counter() - start)
 
 
 def realtime_ingestion() -> dict[str, Any]:  # pragma: no cover - requires prefect

@@ -85,6 +85,82 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 7,
+      "title": "Graph Nodes",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 20 },
+      "targets": [
+        { "expr": "iigp_graph_nodes", "legendFormat": "nodes", "refId": "A" }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Graph Edges",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 20 },
+      "targets": [
+        { "expr": "iigp_graph_edges", "legendFormat": "edges", "refId": "A" }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Content Generated (rate)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "targets": [
+        {
+          "expr": "sum(rate(iigp_content_generated_total[5m])) by (platform, quality)",
+          "legendFormat": "{{platform}} / {{quality}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Pipeline Runs (rate)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        {
+          "expr": "sum(rate(iigp_pipeline_runs_total[5m])) by (pipeline, status)",
+          "legendFormat": "{{pipeline}} / {{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Pipeline Duration p95 (s)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(iigp_pipeline_duration_seconds_bucket[5m])) by (le, pipeline))",
+          "legendFormat": "{{pipeline}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Collector Documents (rate)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "targets": [
+        {
+          "expr": "sum(rate(iigp_collector_documents_total[5m])) by (source, status)",
+          "legendFormat": "{{source}} / {{status}}",
+          "refId": "A"
+        }
+      ]
     }
   ]
 }

@@ -106,3 +106,15 @@ def test_pipeline_with_korean_content():
     assert summary is not None
     assert summary["ingested"] == 1
     assert summary["graph_nodes"] >= 12  # seed nodes + the new topic node
+
+
+@pytest.mark.integration
+def test_pipeline_records_observability_metrics():
+    """Running the pipeline increments the pipeline-run counter (in-process)."""
+    pytest.importorskip("prometheus_client")
+    from api.metrics import metrics_snapshot
+
+    before = metrics_snapshot()["pipeline_runs_total"]
+    run_daily_pipeline(documents=[{"source_id": "m1", "title": "Metric", "text": "one two three"}])
+    after = metrics_snapshot()["pipeline_runs_total"]
+    assert after >= before + 1

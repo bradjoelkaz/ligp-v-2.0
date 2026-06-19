@@ -19,6 +19,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from api.admin import data
+from api.metrics import metrics_snapshot, record_graph_size
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
@@ -54,6 +55,7 @@ async def index(request: Request) -> HTMLResponse:
         summary=data.dashboard_summary(),
         stats=data.graph_stats(),
         revenue_paths=data.top_revenue_paths(),
+        live=metrics_snapshot(),
     )
 
 
@@ -87,4 +89,7 @@ async def api_graph() -> JSONResponse:
 
 @router.get("/api/stats", summary="Graph summary stats")
 async def api_stats() -> JSONResponse:
-    return JSONResponse(data.graph_stats())
+    stats = data.graph_stats()
+    # Reflect the rendered graph size into the Prometheus gauges (in-process).
+    record_graph_size(stats["node_count"], stats["edge_count"])
+    return JSONResponse(stats)

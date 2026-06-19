@@ -9,8 +9,10 @@ test drives).
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
+from api import metrics
 from content_factory.generators.blog_generator import BlogGenerator
 from content_factory.quality_gate import QualityGate
 from decision_engine.selector import ThompsonSelector
@@ -32,7 +34,28 @@ def run_daily_pipeline(
     platform: str = "blog",
     top_k: int = 5,
 ) -> dict[str, Any]:
-    """Run the end-to-end pipeline over collected ``documents``.
+    """Run the end-to-end pipeline, recording observability metrics.
+
+    Times the run and records ``iigp_pipeline_runs_total`` /
+    ``iigp_pipeline_duration_seconds`` (with success/error status) around the
+    core implementation.
+    """
+    start = time.perf_counter()
+    status = "error"
+    try:
+        result = _run_daily_pipeline(documents, platform, top_k)
+        status = "success"
+        return result
+    finally:
+        metrics.record_pipeline_run("daily", status, time.perf_counter() - start)
+
+
+def _run_daily_pipeline(
+    documents: list[dict[str, Any]],
+    platform: str = "blog",
+    top_k: int = 5,
+) -> dict[str, Any]:
+    """Core pipeline implementation (ingest -> ... -> generate -> quality gate).
 
     Each document is a dict with at least ``title`` and ``text``. Returns a
     summary with the generated/quality-checked content items.
@@ -97,8 +120,10 @@ def run_daily_pipeline(
         passed, issues = gate.check(content, platform)
         content["quality_passed"] = passed
         content["quality_issues"] = issues
+        metrics.record_content_generated(platform, passed)
         outputs.append(content)
 
+    metrics.record_graph_size(store.num_nodes(), store.num_edges())
     summary = {
         "ingested": len(documents),
         "unique": len(unique),

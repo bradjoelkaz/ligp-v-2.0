@@ -24,6 +24,36 @@
   </div>
 
   <div class="panel">
+    <h2>Operational metrics (live)</h2>
+    <div class="cards">
+      <div class="card">
+        <div class="label">HTTP Requests</div>
+        <div class="value">{{ live.http_requests_total | int }}</div>
+      </div>
+      <div class="card">
+        <div class="label">In Progress</div>
+        <div class="value">{{ live.http_requests_in_progress | int }}</div>
+      </div>
+      <div class="card">
+        <div class="label">Content Generated</div>
+        <div class="value">{{ live.content_generated_total | int }}</div>
+      </div>
+      <div class="card">
+        <div class="label">Pipeline Runs</div>
+        <div class="value">{{ live.pipeline_runs_total | int }}</div>
+      </div>
+      <div class="card">
+        <div class="label">Graph Nodes (gauge)</div>
+        <div class="value">{{ live.graph_nodes | int }}</div>
+      </div>
+    </div>
+    <p class="subtitle" style="margin:10px 0 0;">
+      Live in-process values from the Prometheus registry. Worker-process pipeline
+      metrics are exposed separately (see /metrics).
+    </p>
+  </div>
+
+  <div class="panel">
     <h2>Nodes by type</h2>
     <table>
       <thead><tr><th>Type</th><th>Count</th></tr></thead>

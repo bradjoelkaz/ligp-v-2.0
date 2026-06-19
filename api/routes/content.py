@@ -35,12 +35,15 @@ def get_router():  # pragma: no cover - requires fastapi
 
     @router.post("/generate")
     def generate(req: GenerateRequest) -> dict[str, Any]:
+        from api.metrics import record_content_generated
+
         content = BlogGenerator().generate(
             {"id": req.node_id, "name": req.name or req.node_id, "tags": req.tags}, req.platform
         )
         passed, issues = QualityGate().check(content, req.platform)
         content["quality_passed"] = passed
         content["quality_issues"] = issues
+        record_content_generated(req.platform, passed)
         return content
 
     @router.get("/{content_id}")

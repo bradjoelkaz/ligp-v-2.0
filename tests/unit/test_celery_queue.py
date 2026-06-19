@@ -81,23 +81,25 @@ def test_generate_content_task_success(tmp_path, monkeypatch, eager):
 
 
 @pytest.mark.unit
-def test_generate_content_task_failure_is_recorded(tmp_path, monkeypatch, eager):
+def test_generate_content_task_failure_propagates(tmp_path, monkeypatch, eager):
     url = f"sqlite:///{tmp_path / 'c.db'}"
     monkeypatch.setenv("DATABASE_URL", url)
     content_mod._persist_pending("cid", "[pending]", "blog")
     _stub_generation(monkeypatch, fail=True)
 
-    # _process_content swallows the error and records status=failed; the task
-    # itself completes normally (never crashes the worker).
-    tasks_mod.generate_content_task.delay("cid", {"node_id": "n", "platform": "blog"}).get(
-        timeout=5
-    )
+    # Phase 19: the task now lets exceptions propagate (so Celery can retry /
+    # the on_failure hook can record terminal failure in a real worker). Eager
+    # mode skips on_failure (celery/celery#3728), so we assert propagation here
+    # and cover the failed-status write in test_celery_resilience.
+    with pytest.raises(RuntimeError):
+        tasks_mod.generate_content_task.delay("cid", {"node_id": "n", "platform": "blog"}).get(
+            timeout=5
+        )
 
     repo = _repo(url)
     try:
-        row = repo.get("cid")
-        assert row["status"] == "failed"
-        assert "error" in json.loads(row["payload"])
+        # Generation failed mid-flight: status must not have advanced to completed.
+        assert repo.get("cid")["status"] != "completed"
     finally:
         repo.db.close()
 

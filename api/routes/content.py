@@ -22,7 +22,6 @@ def get_router():  # pragma: no cover - requires fastapi
     from content_factory.quality_gate import QualityGate
 
     router = APIRouter(prefix="/content", tags=["content"])
-    quality = QualityGate()
 
     class GenerateRequest(BaseModel):
         node_id: str
@@ -35,7 +34,7 @@ def get_router():  # pragma: no cover - requires fastapi
         content = BlogGenerator().generate(
             {"id": req.node_id, "name": req.name or req.node_id, "tags": req.tags}, req.platform
         )
-        passed, issues = quality.check(content, req.platform)
+        passed, issues = QualityGate().check(content, req.platform)
         content["quality_passed"] = passed
         content["quality_issues"] = issues
         return content

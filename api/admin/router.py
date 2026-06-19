@@ -38,7 +38,7 @@ def get_templates() -> Any:
 
 
 def _render(request: Request, name: str, **context: Any) -> HTMLResponse:
-    base = {"request": request, "active": name.replace(".html", "")}
+    base = {"active": name.replace(".html", "")}
     base.update(context)
     return get_templates().TemplateResponse(request, name, base)
 

@@ -103,15 +103,20 @@ async def _process_content(
         _update_status(content_id, "failed", error=json.dumps({"error": str(exc)}))
 
 
-def _generate_sync(node_id: str, name: str, platform: str, tags: list[str]) -> dict[str, Any]:
-    """Legacy synchronous generation (used by ?sync=true)."""
+async def _generate_blocking(
+    node_id: str, name: str, platform: str, tags: list[str]
+) -> dict[str, Any]:
+    """Blocking generation used by ?sync=true (awaits generate_async directly).
+
+    Must NOT call the synchronous ``BlogGenerator.generate`` (which uses
+    ``asyncio.run``) because the endpoint runs inside the request event loop.
+    """
     from api.metrics import record_content_generated
     from content_factory.generators.blog_generator import BlogGenerator
     from content_factory.quality_gate import QualityGate
 
-    content = BlogGenerator().generate(
-        {"id": node_id, "name": name or node_id, "tags": tags}, platform
-    )
+    node = {"id": node_id, "name": name or node_id, "tags": tags}
+    content = await BlogGenerator().generate_async(node, platform)
     passed, issues = QualityGate().check(content, platform)
     content["quality_passed"] = passed
     content["quality_issues"] = issues
@@ -154,7 +159,7 @@ def get_router():  # pragma: no cover - requires fastapi
         req: GenerateRequest, background_tasks: BackgroundTasks, sync: bool = False
     ) -> dict[str, Any]:
         if sync:
-            return _generate_sync(req.node_id, req.name, req.platform, req.tags)
+            return await _generate_blocking(req.node_id, req.name, req.platform, req.tags)
         content_id = str(uuid.uuid4())
         _persist_pending(content_id, f"[pending] {req.name or req.node_id}", req.platform)
         background_tasks.add_task(

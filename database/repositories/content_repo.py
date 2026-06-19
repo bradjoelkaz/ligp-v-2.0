@@ -69,3 +69,29 @@ class ContentRepository:
 
     def update_status(self, content_id: str, status: str) -> None:
         self.db.execute("UPDATE content SET status = ? WHERE content_id = ?", (status, content_id))
+
+    def list_content(
+        self, limit: int = 50, status: str | None = None, since: str | None = None
+    ) -> list[dict[str, Any]]:
+        """List content history with optional status/since filters (newest first)."""
+        sql = (
+            "SELECT content_id, title, status, platform, created_at, updated_at "
+            "FROM content WHERE 1=1"
+        )
+        params: list[Any] = []
+        if status:
+            sql += " AND status = ?"
+            params.append(status)
+        if since:
+            sql += " AND created_at >= ?"
+            params.append(since)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(int(limit))
+        return self.db.execute(sql, tuple(params))
+
+    def counts(self) -> dict[str, Any]:
+        """Return total content count and a per-status breakdown."""
+        total = self.db.execute("SELECT COUNT(*) AS c FROM content", ())[0]["c"]
+        rows = self.db.execute("SELECT status, COUNT(*) AS c FROM content GROUP BY status", ())
+        by_status = {row["status"]: int(row["c"]) for row in rows}
+        return {"total": int(total), "by_status": dict(sorted(by_status.items()))}

@@ -139,6 +139,11 @@ async def api_stats() -> JSONResponse:
     return JSONResponse(stats)
 
 
+@router.get("/api/content-stats", summary="Content generation stats")
+async def api_content_stats() -> JSONResponse:
+    return JSONResponse(data.content_stats())
+
+
 # -- write endpoints (persist to graph_nodes / graph_edges) ------------------
 
 

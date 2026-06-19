@@ -17,6 +17,53 @@ from utils.logger import get_logger
 _log = get_logger(__name__)
 
 
+def _persist_content(content: dict[str, Any], platform: str) -> str | None:
+    """Persist generated content to the DB when configured. Never raises.
+
+    Returns the new content_id, or None when no DATABASE_URL is set or on any
+    DB error (so content generation never fails because of persistence).
+    """
+    import os
+
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        return None
+    try:
+        from database.db_adapter import DBAdapter
+        from database.repositories.content_repo import ContentRepository
+
+        repo = ContentRepository(DBAdapter(url))
+        try:
+            return repo.save(
+                {**content, "platform": platform, "status": content.get("status", "draft")}
+            )
+        finally:
+            repo.db.close()
+    except Exception:  # noqa: BLE001 - persistence must not break generation
+        _log.warning("content_persist_failed")
+        return None
+
+
+def _list_history(limit: int = 50, status: str | None = None, since: str | None = None):
+    """Read content history from the DB (empty list when no DB / on error)."""
+    import os
+
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        return []
+    try:
+        from database.db_adapter import DBAdapter
+        from database.repositories.content_repo import ContentRepository
+
+        repo = ContentRepository(DBAdapter(url))
+        try:
+            return repo.list_content(limit=limit, status=status, since=since)
+        finally:
+            repo.db.close()
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def get_router():  # pragma: no cover - requires fastapi
     """Build and return the content APIRouter (lazy FastAPI import)."""
     from fastapi import APIRouter, HTTPException
@@ -44,7 +91,18 @@ def get_router():  # pragma: no cover - requires fastapi
         content["quality_passed"] = passed
         content["quality_issues"] = issues
         record_content_generated(req.platform, passed)
+        # Persist (fire-and-forget) so it appears in /content/history.
+        content_id = _persist_content(content, req.platform)
+        if content_id:
+            content["content_id"] = content_id
         return content
+
+    # NOTE: declared before "/{content_id}" so it is not captured as a path param.
+    @router.get("/history")
+    def history(
+        limit: int = 50, status: str | None = None, since: str | None = None
+    ) -> list[dict[str, Any]]:
+        return _list_history(limit=limit, status=status, since=since)
 
     @router.get("/{content_id}")
     def get_content(content_id: str) -> dict[str, Any]:

@@ -79,8 +79,12 @@ def test_pool_active_uses_connections_in_use_when_present(monkeypatch):
 
 @pytest.mark.unit
 def test_pool_stats_sum_across_pools(monkeypatch):
-    metrics_mod.register_db_pool(_FakePool({"pool_size": 5, "pool_available": 2}))
-    metrics_mod.register_db_pool(_FakePool({"pool_size": 8, "pool_available": 1}))
+    # Hold strong refs: _DB_POOLS is a WeakSet, so inline temporaries would be
+    # GC'd before update_dynamic() runs.
+    pool_a = _FakePool({"pool_size": 5, "pool_available": 2})
+    pool_b = _FakePool({"pool_size": 8, "pool_available": 1})
+    metrics_mod.register_db_pool(pool_a)
+    metrics_mod.register_db_pool(pool_b)
     m = _fresh_metrics()
     m.update_dynamic()
     # active: (5-2)+(8-1)=10 ; total: 5+8=13
@@ -131,7 +135,8 @@ def test_update_dynamic_survives_pool_failure(monkeypatch):
         def pop_stats(self):
             raise RuntimeError("pool exploded")
 
-    metrics_mod.register_db_pool(_BadPool())
+    bad_pool = _BadPool()  # strong ref: WeakSet would drop an inline temporary
+    metrics_mod.register_db_pool(bad_pool)
     m = _fresh_metrics()
     m.update_dynamic()  # must not raise
     assert m.registry.get_sample_value("iigp_db_pool_connections_active") == 0.0

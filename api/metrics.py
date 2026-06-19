@@ -20,6 +20,11 @@ Business metrics (Phase 9):
     iigp_pipeline_duration_seconds{pipeline}          Histogram
     iigp_collector_documents_total{source,status}     Counter
 
+Dynamic resource gauges (Phase 20, refreshed on each /metrics scrape):
+    iigp_db_pool_connections_active                   Gauge
+    iigp_db_pool_connections_total                    Gauge
+    iigp_celery_queue_length                          Gauge
+
 NOTE on multi-process exposure: prometheus_client metrics are per-process. The
 API process serves ``/metrics`` with its own registry, so business metrics
 recorded inside the worker process (e.g. the daily pipeline) are NOT visible on
@@ -33,6 +38,7 @@ from __future__ import annotations
 
 import os
 import time
+import weakref
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -98,6 +104,10 @@ class _Metrics:
         self._pipeline_runs: Any = None
         self._pipeline_duration: Any = None
         self._collector_docs: Any = None
+        # Dynamic resource gauges (Phase 20).
+        self._db_pool_active: Any = None
+        self._db_pool_total: Any = None
+        self._celery_queue_len: Any = None
         self._content_type = "text/plain; version=0.0.4; charset=utf-8"
         self._generate_latest: Callable[[Any], bytes] | None = None
 
@@ -190,6 +200,28 @@ class _Metrics:
             labelnames=("source", "status"),
             registry=mreg,
         )
+        # -- Dynamic resource gauges (Phase 20) ------------------------------
+        # Refreshed on each scrape via update_dynamic(). livesum so per-worker
+        # pool stats aggregate across processes; queue length is a single global
+        # value (mostrecent avoids summing the same number across workers).
+        self._db_pool_active = Gauge(
+            "iigp_db_pool_connections_active",
+            "Database connections currently checked out of the pool.",
+            registry=mreg,
+            multiprocess_mode="livesum",
+        )
+        self._db_pool_total = Gauge(
+            "iigp_db_pool_connections_total",
+            "Total connections currently held by the pool.",
+            registry=mreg,
+            multiprocess_mode="livesum",
+        )
+        self._celery_queue_len = Gauge(
+            "iigp_celery_queue_length",
+            "Pending tasks in the Celery (Redis) queue.",
+            registry=mreg,
+            multiprocess_mode="mostrecent",
+        )
         self._content_type = CONTENT_TYPE_LATEST
         self._generate_latest = generate_latest
         self.available = True
@@ -226,6 +258,25 @@ class _Metrics:
     def inc_collector(self, source: str, status: str, count: int = 1) -> None:
         if self.available and count:
             self._collector_docs.labels(source=source, status=status).inc(count)
+
+    def update_dynamic(self) -> None:
+        """Refresh scrape-time resource gauges (DB pool + Celery queue).
+
+        Called on each ``/metrics`` render. Each source is isolated in its own
+        try/except so a DB/Redis hiccup can never make ``/metrics`` 500.
+        """
+        if not self.available:
+            return
+        try:
+            active, total = _collect_pool_stats()
+            self._db_pool_active.set(active)
+            self._db_pool_total.set(total)
+        except Exception:  # noqa: BLE001 - metrics must never break /metrics
+            pass
+        try:
+            self._celery_queue_len.set(_collect_queue_length())
+        except Exception:  # noqa: BLE001 - metrics must never break /metrics
+            pass
 
     def snapshot(self) -> dict[str, float]:
         """Current scalar values of key metrics (0.0 for each when unavailable).
@@ -269,6 +320,66 @@ class _Metrics:
 # Module-level singleton shared by the middleware and the /metrics route.
 METRICS = _Metrics()
 
+# Live DB connection pools to introspect at scrape time. WeakSet so a closed /
+# GC'd adapter pool drops out automatically (no leak, no stale series).
+_DB_POOLS: weakref.WeakSet[Any] = weakref.WeakSet()
+
+
+def register_db_pool(pool: Any) -> None:
+    """Register a psycopg3 ConnectionPool for scrape-time stats (Phase 20).
+
+    Called lazily by ``DBAdapter`` when it opens a pool. Exception-safe and
+    idempotent; a ``None`` pool is ignored.
+    """
+    if pool is None:
+        return
+    try:
+        _DB_POOLS.add(pool)
+    except TypeError:  # pragma: no cover - non-weakreferenceable object
+        pass
+
+
+def _collect_pool_stats() -> tuple[float, float]:
+    """Sum (active, total) connections across all registered DB pools.
+
+    Returns ``(0.0, 0.0)`` when no pool is registered (e.g. SQLite/dev). Reads
+    psycopg3 ``pop_stats()``; tolerates pools that raise or omit keys.
+    """
+    active = 0.0
+    total = 0.0
+    for pool in list(_DB_POOLS):
+        try:
+            stats = pool.pop_stats()
+        except Exception:  # noqa: BLE001 - skip a misbehaving pool
+            continue
+        in_use = stats.get("connections_in_use")
+        if in_use is None:
+            size = stats.get("pool_size", 0) or 0
+            available = stats.get("pool_available", 0) or 0
+            in_use = max(size - available, 0)
+        configured = stats.get("pool_size") or stats.get("connections_num") or 0
+        active += float(in_use)
+        total += float(configured)
+    return active, total
+
+
+def _collect_queue_length(queue: str = "celery") -> float:
+    """Return the Redis list length for ``queue`` (0.0 if unconfigured/unreachable).
+
+    ``redis`` is imported lazily so this module stays import-safe without it.
+    Any connection/timeout error is swallowed and reported as 0.
+    """
+    broker = os.getenv("CELERY_BROKER_URL")
+    if not broker:
+        return 0.0
+    try:
+        import redis
+
+        client = redis.Redis.from_url(broker, socket_connect_timeout=1, socket_timeout=1)
+        return float(client.llen(queue))
+    except Exception:  # noqa: BLE001 - never let a broker blip break /metrics
+        return 0.0
+
 
 def setup_metrics(registry: Any = None) -> _Metrics:
     """Initialise the shared metrics registry and return it (idempotent)."""
@@ -303,6 +414,7 @@ def render_latest() -> tuple[bytes, str]:
     """Render the current metrics exposition (lazy-initialises on first call)."""
     if not METRICS.available:
         METRICS.setup()
+    METRICS.update_dynamic()
     return METRICS.render_latest()
 
 

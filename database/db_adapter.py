@@ -70,6 +70,13 @@ class DBAdapter:
         min_conn = int(os.environ.get("DB_POOL_MIN_CONN", "5"))
         max_conn = int(os.environ.get("DB_POOL_MAX_CONN", "20"))
         self._pool = ConnectionPool(self.url, min_size=min_conn, max_size=max_conn, open=True)
+        # Register for scrape-time pool metrics (Phase 20); never fail on this.
+        try:
+            from api.metrics import register_db_pool
+
+            register_db_pool(self._pool)
+        except Exception:  # pragma: no cover - metrics wiring is best-effort
+            pass
         _log.info(
             "db_pool_initialized",
             extra={"min": min_conn, "max": max_conn, "backend": self.backend},

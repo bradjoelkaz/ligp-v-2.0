@@ -12,10 +12,11 @@ the cold-start seed graph and validated config.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -45,14 +46,23 @@ class EdgeIn(BaseModel):
     weight: float = 0.5
 
 
-def _graph_repo() -> Any:
-    """Build a GraphRepository, or 503 when no database is configured.
+async def verify_admin_key(x_api_key: str = Header(..., alias="X-API-Key")) -> None:
+    """Authorise graph-mutation requests via the ``X-API-Key`` header.
 
-    NOTE: the /admin surface is public in this build; graph-mutation endpoints
-    should be placed behind network ACLs or auth before production use.
+    Read-only GET endpoints stay public; only the POST (write) endpoints depend
+    on this. The expected key comes from ``$ADMIN_API_KEY`` (read at request
+    time). A missing header is rejected by FastAPI (422); an unset server key
+    yields 503; a mismatch yields 401.
     """
-    import os
+    admin_key = os.getenv("ADMIN_API_KEY", "")
+    if not admin_key:
+        raise HTTPException(status_code=503, detail="admin API key not configured")
+    if x_api_key != admin_key:
+        raise HTTPException(status_code=401, detail="invalid API key")
 
+
+def _graph_repo() -> Any:
+    """Build a GraphRepository, or 503 when no database is configured."""
     url = os.getenv("DATABASE_URL")
     if not url:
         raise HTTPException(status_code=503, detail="graph persistence requires DATABASE_URL")
@@ -132,7 +142,12 @@ async def api_stats() -> JSONResponse:
 # -- write endpoints (persist to graph_nodes / graph_edges) ------------------
 
 
-@router.post("/api/node", summary="Create or update a graph node")
+@router.post(
+    "/api/node",
+    status_code=201,
+    dependencies=[Depends(verify_admin_key)],
+    summary="Create or update a graph node",
+)
 async def upsert_node(node: NodeIn) -> JSONResponse:
     repo = _graph_repo()
     try:
@@ -142,7 +157,12 @@ async def upsert_node(node: NodeIn) -> JSONResponse:
     return JSONResponse({"node_id": node_id}, status_code=201)
 
 
-@router.post("/api/edge", summary="Create or update a graph edge")
+@router.post(
+    "/api/edge",
+    status_code=201,
+    dependencies=[Depends(verify_admin_key)],
+    summary="Create or update a graph edge",
+)
 async def upsert_edge(edge: EdgeIn) -> JSONResponse:
     repo = _graph_repo()
     try:

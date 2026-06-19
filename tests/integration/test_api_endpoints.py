@@ -126,15 +126,19 @@ def test_cors_headers_present(client):
 def test_admin_graph_write_then_read(tmp_path, monkeypatch):
     """POST node/edge persists to the DB and is reflected by /admin/api/graph."""
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'graph.db'}")
+    monkeypatch.setenv("ADMIN_API_KEY", "secret-admin")
+    headers = {"X-API-Key": "secret-admin"}
     with TestClient(create_app()) as c:
         r1 = c.post(
             "/admin/api/node",
             json={"node_id": "t:x", "type": "topic", "name": "X", "weight": 1.0},
+            headers=headers,
         )
         assert r1.status_code == 201
         r2 = c.post(
             "/admin/api/node",
             json={"node_id": "p:y", "type": "product", "name": "Y", "weight": 0.5},
+            headers=headers,
         )
         assert r2.status_code == 201
         r3 = c.post(
@@ -145,6 +149,7 @@ def test_admin_graph_write_then_read(tmp_path, monkeypatch):
                 "relation_type": "monetizes_via",
                 "weight": 0.8,
             },
+            headers=headers,
         )
         assert r3.status_code == 201
 
@@ -156,8 +161,13 @@ def test_admin_graph_write_then_read(tmp_path, monkeypatch):
 
 @pytest.mark.integration
 def test_admin_node_write_requires_database_url(monkeypatch):
-    """Without DATABASE_URL the write endpoint returns 503 (persistence disabled)."""
+    """With a valid key but no DATABASE_URL the write endpoint returns 503."""
     monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("ADMIN_API_KEY", "secret-admin")
     with TestClient(create_app()) as c:
-        resp = c.post("/admin/api/node", json={"node_id": "n1", "name": "N1"})
+        resp = c.post(
+            "/admin/api/node",
+            json={"node_id": "n1", "name": "N1"},
+            headers={"X-API-Key": "secret-admin"},
+        )
         assert resp.status_code == 503

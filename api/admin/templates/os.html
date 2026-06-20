@@ -86,4 +86,52 @@
   <p class="subtitle">아직 생성된 자산이 없습니다.</p>
   {% endif %}
 </div>
+
+<!-- Deployments -->
+<div class="panel">
+  <h2>배포 현황 (Deployments)</h2>
+  {% if os.deploy_mix %}
+  <div class="mix-bar">
+    {% set dcolors = ['#4f9dff', '#27c2a0', '#f5a623', '#a06bff', '#ffd166', '#ff5d73'] %}
+    {% set dtotal = os.deploy_mix | sum(attribute='count') %}
+    {% for row in os.deploy_mix %}
+    <div class="mix-seg" style="width: {{ (row.count / dtotal * 100) if dtotal else 0 }}%; background: {{ dcolors[loop.index0 % dcolors|length] }};" title="{{ row.platform }} ({{ row.count }})"></div>
+    {% endfor %}
+  </div>
+  <table>
+    <thead><tr><th>플랫폼</th><th>콘텐츠 ID</th><th>상태</th><th>링크</th><th>시각</th></tr></thead>
+    <tbody>
+      {% for d in os.deployments %}
+      <tr>
+        <td>{{ d.platform }}</td>
+        <td>{{ d.content_id }}</td>
+        <td>{{ d.status }}</td>
+        <td><a href="{{ d.url }}" target="_blank" rel="noopener">{{ d.url }}</a></td>
+        <td>{{ d.created_at }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="subtitle">아직 배포된 콘텐츠가 없습니다.</p>
+  {% endif %}
+</div>
+
+<!-- Weight calibration trend (L7) -->
+<div class="panel">
+  <h2>가중치 자가 보정 추이 (L7 Weight Calibration)</h2>
+  {% if os.current_weights %}
+  <table>
+    <thead><tr><th>가중치 (Component)</th><th>현재 값</th></tr></thead>
+    <tbody>
+      {% for k, v in os.current_weights.items() %}
+      <tr><td>{{ k }}</td><td>{{ "%.4f"|format(v) }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="subtitle">총 {{ os.weights_history|length }}회 보정 스냅샷 누적</p>
+  {% else %}
+  <p class="subtitle">아직 가중치 보정 이력이 없습니다. 성과 피드백 수집 후 보정됩니다.</p>
+  {% endif %}
+</div>
 {% endblock %}

@@ -48,9 +48,28 @@ def init_db() -> None:
                     source_url TEXT,
                     platform TEXT,
                     published_at TEXT,
+                    language TEXT,
+                    country TEXT,
+                    views INTEGER DEFAULT 0,
+                    likes INTEGER DEFAULT 0,
+                    comments INTEGER DEFAULT 0,
+                    shares INTEGER DEFAULT 0,
                     collected_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
                 """)
+            # Forward-compat: add L2 columns to pre-existing DBs (best-effort).
+            for _col, _decl in (
+                ("language", "TEXT"),
+                ("country", "TEXT"),
+                ("views", "INTEGER DEFAULT 0"),
+                ("likes", "INTEGER DEFAULT 0"),
+                ("comments", "INTEGER DEFAULT 0"),
+                ("shares", "INTEGER DEFAULT 0"),
+            ):
+                try:
+                    cursor.execute(f"ALTER TABLE raw_articles ADD COLUMN {_col} {_decl}")
+                except sqlite3.OperationalError:
+                    pass  # column already exists
 
             # 2. Analyzed trend topics (entities + prompts).
             cursor.execute("""
@@ -131,6 +150,27 @@ def init_db() -> None:
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
                 """)
+
+            # 8. Deployment ledger (virtual multi-channel publishing).
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS deployments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    content_id TEXT,
+                    platform TEXT,
+                    url TEXT,
+                    status TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+
+            # 9. Calibrated-weights history (OS dashboard trend chart).
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS weights_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    weights TEXT NOT NULL,    -- JSON snapshot
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
             conn.commit()
             _log.info("sqlite_db_initialized", extra={"path": DB_PATH})
     except Exception as exc:  # noqa: BLE001 - persistence must never crash callers
@@ -147,8 +187,9 @@ def save_raw_articles(articles: list[dict[str, Any]]) -> None:
             cursor.executemany(
                 """
                 INSERT OR REPLACE INTO raw_articles
-                    (source_id, title, text, source_url, platform, published_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (source_id, title, text, source_url, platform, published_at,
+                     language, country, views, likes, comments, shares)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -158,6 +199,12 @@ def save_raw_articles(articles: list[dict[str, Any]]) -> None:
                         art.get("source_url", ""),
                         art.get("platform", ""),
                         art.get("published_at", ""),
+                        art.get("language", ""),
+                        art.get("country", ""),
+                        int((art.get("engagement") or {}).get("views", 0) or 0),
+                        int((art.get("engagement") or {}).get("likes", 0) or 0),
+                        int((art.get("engagement") or {}).get("comments", 0) or 0),
+                        int((art.get("engagement") or {}).get("shares", 0) or 0),
                     )
                     for art in articles
                 ],
@@ -253,7 +300,8 @@ def get_recent_articles(limit: int = 500) -> list[dict[str, Any]]:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT source_id, title, text, source_url, platform, published_at
+                SELECT source_id, title, text, source_url, platform, published_at,
+                       language, country, views, likes, comments, shares
                 FROM raw_articles
                 ORDER BY collected_at DESC
                 LIMIT ?
@@ -529,4 +577,88 @@ def list_generated_content(limit: int = 50) -> list[dict[str, Any]]:
         return [dict(r) for r in rows]
     except Exception as exc:  # noqa: BLE001
         _log.error("list_generated_content_failed", extra={"error": str(exc)})
+        return []
+
+
+# --- deployments + weights history (Phase 7) --------------------------------
+
+
+def record_deployment(content_id: str, platform: str, url: str, status: str) -> None:
+    """Append a deployment record (virtual or real publish)."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT INTO deployments (content_id, platform, url, status) VALUES (?, ?, ?, ?)",
+                (content_id, platform, url, status),
+            )
+            conn.commit()
+            _log.info("recorded_deployment", extra={"content_id": content_id, "platform": platform})
+    except Exception as exc:  # noqa: BLE001
+        _log.error("record_deployment_failed", extra={"error": str(exc)})
+
+
+def get_deployments(limit: int = 100) -> list[dict[str, Any]]:
+    """Return recent deployment records (newest first)."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT content_id, platform, url, status, created_at
+                FROM deployments ORDER BY created_at DESC, id DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as exc:  # noqa: BLE001
+        _log.error("get_deployments_failed", extra={"error": str(exc)})
+        return []
+
+
+def deployment_mix() -> list[dict[str, Any]]:
+    """Return deployment counts grouped by platform (descending)."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            rows = conn.execute(
+                "SELECT platform, COUNT(*) FROM deployments GROUP BY platform ORDER BY 2 DESC"
+            ).fetchall()
+        return [{"platform": p, "count": int(c)} for p, c in rows]
+    except Exception as exc:  # noqa: BLE001
+        _log.error("deployment_mix_failed", extra={"error": str(exc)})
+        return []
+
+
+def record_weights_snapshot(weights: dict[str, float]) -> None:
+    """Append a JSON snapshot of the calibrated weights for trend charting."""
+    if not weights:
+        return
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT INTO weights_history (weights) VALUES (?)",
+                (json.dumps(weights, ensure_ascii=False),),
+            )
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        _log.error("record_weights_snapshot_failed", extra={"error": str(exc)})
+
+
+def get_weights_history(limit: int = 50) -> list[dict[str, Any]]:
+    """Return recent calibrated-weights snapshots (oldest first for charting)."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT weights, created_at FROM weights_history ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in reversed(rows):  # chronological order
+            try:
+                out.append({"weights": json.loads(r["weights"]), "created_at": r["created_at"]})
+            except (json.JSONDecodeError, TypeError):
+                continue
+        return out
+    except Exception as exc:  # noqa: BLE001
+        _log.error("get_weights_history_failed", extra={"error": str(exc)})
         return []

@@ -226,3 +226,64 @@ def test_all_ops_graceful_on_bad_db_path(tmp_path, monkeypatch):
     assert db_store.cost_total() == 0.0
     assert db_store.get_generated_content("x") is None
     assert db_store.list_generated_content() == []
+
+
+# --- Phase 7: L2 columns, deployments, weights history ---------------------
+
+
+def test_raw_articles_l2_fields_persisted(store):
+    store.save_raw_articles(
+        [
+            {
+                "source_id": "y1",
+                "title": "AI 뉴스",
+                "text": "본문",
+                "source_url": "u",
+                "platform": "youtube",
+                "published_at": "",
+                "language": "ko",
+                "country": "KR",
+                "engagement": {"views": 1000, "likes": 50, "comments": 10, "shares": 2},
+            }
+        ]
+    )
+    recent = store.get_recent_articles()
+    assert recent[0]["language"] == "ko"
+    assert recent[0]["country"] == "KR"
+    assert recent[0]["views"] == 1000
+    assert recent[0]["likes"] == 50
+    assert recent[0]["comments"] == 10
+
+
+def test_raw_articles_l2_defaults_when_missing(store):
+    store.save_raw_articles([{"source_id": "n1", "title": "t", "platform": "naver"}])
+    rec = store.get_recent_articles()[0]
+    assert rec["views"] == 0 and rec["likes"] == 0
+
+
+def test_deployments_record_get_mix(store):
+    store.record_deployment("c1", "tistory", "https://mock.local/tistory/c1", "mock")
+    store.record_deployment("c2", "youtube", "https://yt/x", "published")
+    store.record_deployment("c3", "tistory", "https://mock.local/tistory/c3", "mock")
+
+    deployments = store.get_deployments()
+    assert len(deployments) == 3
+    mix = store.deployment_mix()
+    by_platform = {m["platform"]: m["count"] for m in mix}
+    assert by_platform["tistory"] == 2
+    assert by_platform["youtube"] == 1
+
+
+def test_weights_history_record_and_get(store):
+    store.record_weights_snapshot({"w_trend": 0.30})
+    store.record_weights_snapshot({"w_trend": 0.34})
+    hist = store.get_weights_history()
+    assert len(hist) == 2
+    # chronological order: oldest first
+    assert hist[0]["weights"]["w_trend"] == 0.30
+    assert hist[1]["weights"]["w_trend"] == 0.34
+
+
+def test_weights_history_empty_snapshot_noop(store):
+    store.record_weights_snapshot({})
+    assert store.get_weights_history() == []

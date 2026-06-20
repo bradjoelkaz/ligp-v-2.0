@@ -146,16 +146,27 @@ def daily_pipeline() -> dict[str, Any]:  # pragma: no cover - requires prefect +
     """Prefect flow wrapper. Collects live data, runs the pipeline, pushes metrics."""
     from api.metrics import push_metrics
 
+    docs = _collect_live()
+    # Persist collected raw docs (with L2 language/country/engagement) so the
+    # raw_articles asset table accumulates from the daily run.
+    try:
+        from database.db_store import init_db, save_raw_articles
+
+        init_db()
+        save_raw_articles(docs)
+    except Exception as exc:  # noqa: BLE001 - persistence is best-effort
+        _log.warning("daily_pipeline_persist_failed", extra={"error": str(exc)})
+
     try:
         from prefect import flow
 
         @flow(name="iigp-daily-pipeline")
         def _flow() -> dict[str, Any]:
-            return run_daily_pipeline(_collect_live())
+            return run_daily_pipeline(docs)
 
         result = _flow()
     except Exception:
-        result = run_daily_pipeline(_collect_live())
+        result = run_daily_pipeline(docs)
     push_metrics(job="iigp-daily-pipeline")
     return result
 

@@ -34,8 +34,8 @@ DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "iigp
 
 def init_db() -> None:
     """Create the SQLite tables for raw documents and analyzed topics if absent."""
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     try:
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
 

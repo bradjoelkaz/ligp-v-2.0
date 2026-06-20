@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IIGP v2.0 - 실시간 트렌드 대시보드</title>
+    <!-- Pretendard & Outfit fonts -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg-color: #080b11;
+            --card-bg: rgba(255, 255, 255, 0.02);
+            --card-border: rgba(255, 255, 255, 0.06);
+            --card-hover-border: rgba(99, 102, 241, 0.45);
+            --text-primary: #f3f4f6;
+            --text-secondary: #8e96a4;
+            --primary-glow: radial-gradient(circle at 80% 10%, rgba(99, 102, 241, 0.12) 0%, transparent 60%);
+            --accent-purple: #6366f1;
+            --accent-cyan: #06b6d4;
+            --accent-green: #10b981;
+            --accent-yellow: #f59e0b;
+            --accent-red: #ef4444;
+            --radius: 12px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Pretendard', -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            min-height: 100vh;
+            background-image: var(--primary-glow);
+            background-repeat: no-repeat;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .mono {
+            font-family: 'Outfit', sans-serif;
+        }
+
+        /* Nav Bar */
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 2rem;
+            background: rgba(8, 11, 17, 0.7);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--card-border);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        nav .logo {
+            font-size: 1.25rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--accent-purple), var(--accent-cyan));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: 0.05em;
+        }
+
+        nav ul {
+            display: flex;
+            list-style: none;
+            gap: 1.5rem;
+        }
+
+        nav ul a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 0.9rem;
+            transition: color 0.2s;
+        }
+
+        nav ul a:hover, nav ul .active a {
+            color: #ffffff;
+        }
+
+        /* Container */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 3rem 1.5rem;
+        }
+
+        /* Page Header */
+        .header-sec {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .title-area h1 {
+            font-size: 2rem;
+            font-weight: 800;
+            margin-bottom: 0.5rem;
+            letter-spacing: -0.03em;
+        }
+
+        .title-area p {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .action-area {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .search-input {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--card-border);
+            color: var(--text-primary);
+            padding: 0.6rem 1rem;
+            border-radius: 8px;
+            width: 240px;
+            outline: none;
+            transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+            font-size: 0.85rem;
+        }
+
+        .search-input:focus {
+            border-color: var(--accent-purple);
+            width: 290px;
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        .btn-refresh {
+            background: #ffffff;
+            color: #000000;
+            border: none;
+            padding: 0.6rem 1.25rem;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.85rem;
+        }
+
+        .btn-refresh:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+
+        /* Bento Grid (Overview KPIs) */
+        .bento-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1rem;
+            margin-bottom: 2.5rem;
+        }
+
+        @media (max-width: 900px) {
+            .bento-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 550px) {
+            .bento-grid { grid-template-columns: 1fr; }
+        }
+
+        .bento-card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius);
+            padding: 1.25rem;
+            backdrop-filter: blur(10px);
+        }
+
+        .bento-card .lbl {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+        }
+
+        .bento-card .val {
+            font-size: 1.75rem;
+            font-weight: 800;
+            color: #ffffff;
+        }
+
+        .bento-card .sub {
+            font-size: 0.75rem;
+            margin-top: 0.4rem;
+            font-weight: 500;
+        }
+
+        .bento-card .sub.green { color: var(--accent-green); }
+        .bento-card .sub.purple { color: var(--accent-purple); }
+
+        /* Categorized Tabs */
+        .tabs-container {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 2rem;
+            border-bottom: 1px solid var(--card-border);
+            padding-bottom: 0.75rem;
+            overflow-x: auto;
+        }
+
+        .tab-btn {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 0.4rem 1rem;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        .tab-btn:hover {
+            color: #ffffff;
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .tab-btn.active {
+            color: #ffffff;
+            background: rgba(99, 102, 241, 0.15);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+        }
+
+        /* Trend Cards Grid */
+        .trend-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+            gap: 1.25rem;
+        }
+
+        .trend-card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            backdrop-filter: blur(20px);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .trend-card:hover {
+            transform: translateY(-4px);
+            border-color: var(--card-hover-border);
+            box-shadow: 0 10px 24px rgba(99, 102, 241, 0.08);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .meta-badges {
+            display: flex;
+            gap: 0.4rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            font-size: 0.7rem;
+            font-weight: 700;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+        }
+
+        .badge.category { background: rgba(99, 102, 241, 0.12); color: #a5b4fc; }
+        .badge.hot { background: rgba(239, 68, 68, 0.12); color: var(--accent-red); }
+        .badge.speed { background: rgba(6, 182, 212, 0.12); color: var(--accent-cyan); }
+        .badge.warning { background: rgba(245, 158, 11, 0.12); color: var(--accent-yellow); border: 1px solid rgba(245, 158, 11, 0.25); }
+
+        .trend-card h2 {
+            font-size: 1.15rem;
+            font-weight: 700;
+            line-height: 1.4;
+            margin-bottom: 0.6rem;
+            color: #ffffff;
+            letter-spacing: -0.01em;
+        }
+
+        .trend-card p.summary {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            line-height: 1.5;
+            margin-bottom: 1.25rem;
+        }
+
+        /* Suno / Nano Banana prompt box */
+        .suno-box {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            padding: 0.75rem;
+            border-radius: 8px;
+            margin-bottom: 1.25rem;
+        }
+
+        .suno-lbl {
+            font-size: 0.68rem;
+            font-weight: 700;
+            letter-spacing: 0.03em;
+            margin-bottom: 0.35rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .suno-val {
+            font-size: 0.75rem;
+            line-height: 1.45;
+            word-break: break-word;
+            white-space: pre-wrap;
+        }
+
+        .copy-btn {
+            cursor: pointer;
+            color: var(--text-secondary);
+            transition: color 0.15s;
+            user-select: none;
+            font-weight: 600;
+        }
+
+        .copy-btn:hover {
+            color: #ffffff;
+        }
+
+        /* Metric Progress bar */
+        .metric-row {
+            margin-bottom: 0.75rem;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .metric-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.25rem;
+        }
+
+        .metric-header .val {
+            font-weight: 700;
+            color: #ffffff;
+        }
+
+        .bar-bg {
+            height: 5px;
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-purple), var(--accent-cyan));
+            border-radius: 2px;
+        }
+
+        /* Entities list */
+        .entities-sec {
+            margin-top: auto;
+            border-top: 1px solid rgba(255, 255, 255, 0.04);
+            padding-top: 0.75rem;
+        }
+
+        .entity-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+        }
+
+        .entity-tag {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+        }
+
+        /* Modal styling */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(8, 11, 17, 0.85);
+            backdrop-filter: blur(8px);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease-in-out;
+        }
+
+        .modal.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .modal-content {
+            background: #0d131f;
+            border: 1px solid var(--card-border);
+            width: 90%;
+            max-width: 600px;
+            border-radius: 16px;
+            padding: 2.25rem;
+            position: relative;
+            transform: scale(0.96);
+            transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .modal.active .modal-content {
+            transform: scale(1);
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 1.25rem;
+            cursor: pointer;
+        }
+
+        .modal h2 {
+            font-size: 1.5rem;
+            margin-bottom: 0.75rem;
+            font-weight: 800;
+        }
+
+        .modal p.desc {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            line-height: 1.6;
+            margin-bottom: 1.5rem;
+        }
+
+        .modal-footer {
+            margin-top: 1.5rem;
+            display: flex;
+            justify-content: flex-end;
+        }
+
+        .btn-close {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--card-border);
+            color: var(--text-primary);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        /* Spinner */
+        .loading-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 6rem 0;
+            gap: 1rem;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 2px solid rgba(255, 255, 255, 0.03);
+            border-radius: 50%;
+            border-top-color: var(--accent-purple);
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Copy toast */
+        .toast {
+            position: fixed;
+            bottom: 2rem;
+            left: 50%;
+            transform: translateX(-50%) translateY(20px);
+            background: #0d131f;
+            border: 1px solid var(--card-hover-border);
+            color: #ffffff;
+            padding: 0.65rem 1.25rem;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s, transform 0.2s;
+            z-index: 2000;
+            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.4);
+        }
+
+        .toast.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+    </style>
+</head>
+<body>
+
+    <nav>
+        <div class="logo">IIGP v2.0</div>
+        <ul>
+            <li><a href="/admin/">Dashboard</a></li>
+            <li><a href="/admin/graph">Graph</a></li>
+            <li><a href="/admin/content">Content</a></li>
+            <li class="active"><a href="/admin/trends">Trends</a></li>
+            <li><a href="/admin/os">OS</a></li>
+            <li><a href="/admin/experiments">Experiments</a></li>
+            <li><a href="/admin/settings">Settings</a></li>
+        </ul>
+    </nav>
+
+    <div class="container">
+        <div class="header-sec">
+            <div class="title-area">
+                <h1>실시간 트렌드 분석</h1>
+                <p id="sub-info">글로벌 뉴스 피드에서 수집되고 Gemini로 분석된 실시간 트렌드입니다.</p>
+            </div>
+            <div class="action-area">
+                <input type="text" class="search-input" id="search" placeholder="검색어 입력...">
+                <button class="btn-refresh" id="refresh-btn">새로고침</button>
+            </div>
+        </div>
+
+        <!-- Bento Grid Overview -->
+        <div class="bento-grid">
+            <div class="bento-card">
+                <div class="lbl">오늘 수집한 문서</div>
+                <div class="val mono" id="bento-raw-count">0</div>
+                <div class="sub green">&#9650; Live 수집 활성화</div>
+            </div>
+            <div class="bento-card">
+                <div class="lbl">최대 트렌드</div>
+                <div class="val" id="bento-max-trend" style="font-size: 1.2rem; font-weight:700; margin-top:0.4rem;">대기 중</div>
+                <div class="sub purple" id="bento-max-rev">수익성 분석 진행 중</div>
+            </div>
+            <div class="bento-card">
+                <div class="lbl">분석 엔진 상태</div>
+                <div class="val" style="font-size: 1.4rem;">Gemini Pro</div>
+                <div class="sub green">&#9679; Online (SDK + HTTP)</div>
+            </div>
+            <div class="bento-card">
+                <div class="lbl">피드백 가중치</div>
+                <div class="val mono">84.2%</div>
+                <div class="sub green">Auto-Calibration Active</div>
+            </div>
+        </div>
+
+        <!-- Categorized Tabs -->
+        <div class="tabs-container" id="category-tabs">
+            <button class="tab-btn active" data-category="all">전체</button>
+            <button class="tab-btn" data-category="IT/테크">IT/테크</button>
+            <button class="tab-btn" data-category="사회/종합">사회/종합</button>
+            <button class="tab-btn" data-category="비즈니스">비즈니스</button>
+            <button class="tab-btn" data-category="문화/라이프">문화/라이프</button>
+        </div>
+
+        <div id="loading" class="loading-container">
+            <div class="spinner"></div>
+            <p style="font-size: 0.9rem; color: var(--text-secondary);">다국어 소스 데이터 수집 및 Gemini 분석 가동 중...</p>
+        </div>
+
+        <div id="error" class="error-message" style="display: none; color: var(--accent-red); padding: 1rem; border: 1px solid rgba(239,68,68,0.2); background: rgba(239,68,68,0.05); border-radius: 8px; text-align: center; margin-bottom: 2rem;"></div>
+
+        <div class="trend-grid" id="trend-list" style="display: none;">
+            <!-- Cards rendered dynamically -->
+        </div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div class="modal" id="detail-modal">
+        <div class="modal-content">
+            <button class="modal-close" id="modal-close-x">&times;</button>
+            <h2 id="modal-title">토픽 타이틀</h2>
+            <p class="desc" id="modal-summary">요약 내용</p>
+            <div class="entities-sec">
+                <div class="entities-label" style="font-size: 0.7rem; font-weight:600; text-transform:uppercase; color:var(--text-secondary); margin-bottom:0.5rem;">관련 엔티티</div>
+                <div class="entity-tags" id="modal-entities"></div>
+            </div>
+            <div class="modal-footer"><button class="btn-close" id="modal-close-btn">닫기</button></div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        let trendData = [];
+        let activeCategory = 'all';
+        let velocityByTerm = {};
+
+        // Fetch computed Layer-4 velocity per tracked term (best-effort).
+        async function fetchVelocityMap() {
+            try {
+                const res = await fetch('/admin/api/trend-velocity');
+                if (!res.ok) return {};
+                const data = await res.json();
+                const map = {};
+                (data.tracked || []).forEach(t => {
+                    map[(t.term || '').toLowerCase()] = t;
+                });
+                return map;
+            } catch (e) {
+                return {};
+            }
+        }
+
+        // Find the computed velocity for a topic by matching its title/entities
+        // against tracked terms. Returns null when there is no real data yet.
+        function lookupVelocity(topic) {
+            const candidates = [topic.title || ''];
+            (topic.entities || []).forEach(ent => candidates.push(ent.name || ''));
+            const hay = candidates.join(' ').toLowerCase();
+            let best = null;
+            for (const term in velocityByTerm) {
+                if (term && hay.includes(term)) {
+                    const cur = velocityByTerm[term];
+                    if (!best || Math.abs(cur.velocity) > Math.abs(best.velocity)) best = cur;
+                }
+            }
+            return best;
+        }
+
+        // Escape strings that originate from feeds/LLM before injecting as HTML.
+        function escapeHtml(value) {
+            return String(value == null ? '' : value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        let toastTimer = null;
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.innerText = message;
+            toast.classList.add('show');
+            if (toastTimer) clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => toast.classList.remove('show'), 1800);
+        }
+
+        // Copy to clipboard with a secure-context-aware fallback (HTTP/HTTPS safe).
+        function copyText(text) {
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text)
+                    .then(() => showToast('클립보드에 복사되었습니다!'))
+                    .catch(() => fallbackCopy(text));
+            } else {
+                fallbackCopy(text);
+            }
+        }
+
+        function fallbackCopy(text) {
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            textArea.style.position = 'fixed';
+            textArea.style.top = '0';
+            textArea.style.left = '0';
+            textArea.style.opacity = '0';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            try {
+                document.execCommand('copy');
+                showToast('클립보드에 복사되었습니다! (호환 모드)');
+            } catch (err) {
+                console.error('Fallback copy failed', err);
+                showToast('복사 실패: 수동으로 드래그하여 복사해 주세요.');
+            }
+            document.body.removeChild(textArea);
+        }
+
+        async function fetchTrends(force = false) {
+            const loading = document.getElementById('loading');
+            const error = document.getElementById('error');
+            const list = document.getElementById('trend-list');
+            const subInfo = document.getElementById('sub-info');
+            const bentoRaw = document.getElementById('bento-raw-count');
+            const bentoMax = document.getElementById('bento-max-trend');
+            const bentoMaxRev = document.getElementById('bento-max-rev');
+
+            loading.style.display = 'flex';
+            error.style.display = 'none';
+            list.style.display = 'none';
+
+            try {
+                const url = force ? '/admin/api/trends?force_refresh=true' : '/admin/api/trends';
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`HTTP status: ${response.status}`);
+                const data = await response.json();
+
+                trendData = data.topics || [];
+
+                // Pull real computed velocity/acceleration (Layer 4) to replace
+                // the LLM-guessed values on the cards where a match exists.
+                velocityByTerm = await fetchVelocityMap();
+
+                // A partial error with historical DB topics is shown as a banner,
+                // but we still render whatever topics were recovered.
+                if (data.error) {
+                    error.innerText = `알림: ${data.error}`;
+                    error.style.display = 'block';
+                    if (trendData.length === 0) throw new Error(data.error);
+                }
+
+                filterAndRender();
+
+                if (data.collected_at) {
+                    subInfo.innerText = `수집 기준일: ${data.collected_at} (글로벌 원시 문서: ${data.raw_count || 0}건)`;
+                }
+
+                bentoRaw.innerText = data.raw_count || 0;
+                if (trendData.length > 0) {
+                    const topTopic = trendData[0];
+                    bentoMax.innerText = topTopic.title.length > 15 ? topTopic.title.slice(0, 14) + '...' : topTopic.title;
+                    bentoMaxRev.innerText = `예상 수익률: ${topTopic.expected_revenue} / 1만뷰`;
+                } else {
+                    bentoMax.innerText = '없음';
+                    bentoMaxRev.innerText = '수익성 분석 진행 중';
+                }
+
+                list.style.display = 'grid';
+            } catch (err) {
+                error.innerText = `트렌드 로드 실패: ${err.message}`;
+                error.style.display = 'block';
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        function renderTrends(topics) {
+            const list = document.getElementById('trend-list');
+            list.innerHTML = '';
+            if (topics.length === 0) {
+                list.innerHTML = '<p style="grid-column: 1/-1; text-align: center; color: var(--text-secondary); padding: 3rem 0;">검색 결과가 없습니다.</p>';
+                return;
+            }
+            topics.forEach((topic) => {
+                const card = document.createElement('div');
+                card.className = 'trend-card';
+                card.addEventListener('click', () => openModal(topic));
+
+                const isHighRisk = Number(topic.copyright_risk) > 0.3;
+                const riskBadge = isHighRisk
+                    ? `<span class="badge warning">&#9888;&#65039; 리스크 위험 (${escapeHtml(topic.copyright_risk)})</span>`
+                    : '';
+
+                let tagHtml = '';
+                (topic.entities || []).slice(0, 4).forEach(ent => {
+                    tagHtml += `<span class="entity-tag">${escapeHtml(ent.name)}</span>`;
+                });
+
+                const revNum = parseFloat((topic.expected_revenue || '$0.0').replace('$', '')) || 0;
+                const revPercent = Math.min(100, Math.max(10, (revNum / 5.0) * 100));
+
+                const sunoPromptText = topic.suno_prompt || '분석 대기 중';
+                const imagePromptText = topic.image_prompt || '분석 대기 중';
+                const trendPct = Math.round((Number(topic.trend_score) || 0) * 100);
+
+                // Prefer real computed velocity (Layer 4) over the LLM guess.
+                const vel = lookupVelocity(topic);
+                const speedText = vel
+                    ? `${vel.velocity_label} (${vel.state_ko})`
+                    : `${topic.velocity} (${topic.acceleration})`;
+                const speedTitle = vel ? '실측 언급량 기반 (Layer 4)' : 'AI 추정값';
+
+                card.innerHTML = `
+                    <div>
+                        <div class="card-header">
+                            <div class="meta-badges">
+                                <span class="badge category">${escapeHtml(topic.category || '기타')}</span>
+                                <span class="badge hot">HOT ${trendPct}%</span>
+                                <span class="badge speed" title="${speedTitle}">${escapeHtml(speedText)}</span>
+                            </div>
+                            ${riskBadge}
+                        </div>
+                        <h2>${escapeHtml(topic.title)}</h2>
+                        <p class="summary">${escapeHtml(topic.summary)}</p>
+
+                        <!-- Suno AI & Google Nano Banana Prompt Section -->
+                        <div class="suno-box" data-stop>
+                            <div class="suno-lbl" style="color: #a5b4fc;">
+                                <span>&#127925; SUNO MUSIC PROMPT</span>
+                                <span class="copy-btn" data-copy-suno>&#128203; 복사</span>
+                            </div>
+                            <div class="suno-val" data-suno-val style="color: var(--text-primary); margin-bottom: 0.6rem;"></div>
+
+                            <div class="suno-lbl" style="color: #06b6d4;">
+                                <span>&#128444;&#65039; NANO BANANA ALBUM COVER</span>
+                                <span class="copy-btn" data-copy-img>&#128203; 복사</span>
+                            </div>
+                            <div class="suno-val" data-img-val style="color: var(--text-secondary);"></div>
+                        </div>
+
+                        <div class="metric-row">
+                            <div class="metric-header">
+                                <span>예상 수익성 (1만뷰 기준)</span>
+                                <span class="val">${escapeHtml(topic.expected_revenue || '$0.00')}</span>
+                            </div>
+                            <div class="bar-bg"><div class="bar-fill" style="width: ${revPercent}%;"></div></div>
+                        </div>
+                    </div>
+                    <div class="entities-sec" style="margin-top: 0.5rem;">
+                        <div class="entity-tags">${tagHtml}</div>
+                    </div>
+                `;
+
+                // Inject prompt text via textContent (XSS-safe, no escaping pitfalls).
+                card.querySelector('[data-suno-val]').textContent = sunoPromptText;
+                card.querySelector('[data-img-val]').textContent = imagePromptText;
+
+                // The prompt box should not open the detail modal.
+                card.querySelector('[data-stop]').addEventListener('click', (e) => e.stopPropagation());
+                card.querySelector('[data-copy-suno]').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    copyText(sunoPromptText);
+                });
+                card.querySelector('[data-copy-img]').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    copyText(imagePromptText);
+                });
+
+                list.appendChild(card);
+            });
+        }
+
+        function filterAndRender() {
+            const query = document.getElementById('search').value.toLowerCase();
+            const filtered = trendData.filter(topic => {
+                const matchesCategory = activeCategory === 'all' || topic.category === activeCategory;
+                const title = (topic.title || '').toLowerCase();
+                const summary = (topic.summary || '').toLowerCase();
+                const matchesQuery = title.includes(query) || summary.includes(query);
+                return matchesCategory && matchesQuery;
+            });
+            renderTrends(filtered);
+        }
+
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                e.target.classList.add('active');
+                activeCategory = e.target.getAttribute('data-category');
+                filterAndRender();
+            });
+        });
+
+        document.getElementById('search').addEventListener('input', filterAndRender);
+        document.getElementById('refresh-btn').onclick = () => fetchTrends(true);
+
+        const modal = document.getElementById('detail-modal');
+        function openModal(topic) {
+            document.getElementById('modal-title').innerText = topic.title;
+            document.getElementById('modal-summary').innerText = topic.summary;
+            const entities = document.getElementById('modal-entities');
+            entities.innerHTML = '';
+            (topic.entities || []).forEach(ent => {
+                const tag = document.createElement('span');
+                tag.className = 'entity-tag';
+                tag.innerText = `${ent.name} (${ent.type})`;
+                entities.appendChild(tag);
+            });
+            modal.classList.add('active');
+        }
+        function closeModal() { modal.classList.remove('active'); }
+        document.getElementById('modal-close-x').onclick = closeModal;
+        document.getElementById('modal-close-btn').onclick = closeModal;
+        window.onclick = (e) => { if (e.target === modal) closeModal(); };
+
+        window.onload = () => fetchTrends(false);
+    </script>
+</body>
+</html>

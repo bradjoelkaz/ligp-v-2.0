@@ -69,6 +69,7 @@ class QualityGate:
     def __init__(self, banned_terms: set[str] | None = None) -> None:
         cfg = _quality_config()
         self.readability_min = float(cfg.get("gate3_readability", {}).get("blog_min", 60))
+        self.min_critique_score = float(cfg.get("gate4_critique", {}).get("min_score", 80))
         self.banned_terms = banned_terms or set(_DEFAULT_BANNED)
         self.copyright = CopyrightScorer()
 
@@ -113,18 +114,61 @@ class QualityGate:
             issues.append(f"copyright risk too high ({risk:.2f})")
         return issues
 
-    def stage4_llm_critique(self, content: dict[str, Any]) -> list[str]:  # pragma: no cover
-        """Optional LLM self-critique; no-op offline / without budget."""
-        return []
+    def stage4_llm_critique(self, content: dict[str, Any]) -> list[str]:
+        """LLM self-critique of readability, brand safety, and logical consistency.
+
+        Calls an LLM (OpenRouter/Gemini) to score the content 0-100. Rejects
+        (returns an issue) when the score is below ``min_critique_score`` (80).
+        Offline / without API keys this is a no-op (returns ``[]``) so the
+        pipeline and tests are unaffected. Any error fails *open* (no block) and
+        attaches the critique result to ``content['llm_critique']``.
+        """
+        import os
+
+        if not (os.getenv("OPENROUTER_API_KEY") or os.getenv("GEMINI_API_KEY")):
+            return []
+
+        body = content.get("body", "")
+        if not body.strip():
+            return []
+
+        prompt = (
+            "당신은 콘텐츠 품질 심사관입니다. 아래 콘텐츠를 평가하세요.\n"
+            "평가 항목: 가독성(readability), 브랜드 안전성(비속어/민감어, brand_safety), "
+            "본문의 논리적 일관성(consistency).\n"
+            "각 항목과 종합 점수를 0~100으로 매기고, 반드시 다음 JSON으로만 응답하세요:\n"
+            '{"score": 0-100, "readability": 0-100, "brand_safety": 0-100, '
+            '"consistency": 0-100, "reason": "간단한 사유"}\n\n'
+            f"제목: {content.get('title', '')}\n본문:\n{body[:4000]}"
+        )
+        try:
+            import json
+
+            from nlp.llm_processor import GeminiProcessor
+
+            raw = GeminiProcessor().complete(prompt, as_json=True)
+            if not raw:
+                return []
+            data = json.loads(raw)
+            content["llm_critique"] = data
+            score = float(data.get("score", 100))
+            if score < self.min_critique_score:
+                reason = data.get("reason", "")
+                return [f"LLM critique score {score:.0f} < {self.min_critique_score:.0f}: {reason}"]
+            return []
+        except Exception as exc:  # noqa: BLE001 - fail open; never block on critique error
+            _log.warning("llm_critique_failed", extra={"error": str(exc)})
+            return []
 
     def check(self, content: dict[str, Any], platform: str) -> tuple[bool, list[str]]:
-        """Run stages 1-3; return (passed, issues)."""
+        """Run stages 1-4; return (passed, issues)."""
         issues: list[str] = []
         issues += self.stage1_format(content, platform)
         readability = self.stage2_readability(content)
         if readability < self.readability_min:
             issues.append(f"readability {readability:.1f} < {self.readability_min}")
         issues += self.stage3_brand_safety(content)
+        issues += self.stage4_llm_critique(content)
         passed = len(issues) == 0
         _log.info(
             "quality_gate", extra={"platform": platform, "passed": passed, "issues": len(issues)}

@@ -80,6 +80,15 @@ def _graph_source() -> dict[str, list[dict[str, Any]]]:
     return _db_graph() or load_seed_graph()
 
 
+def graph_records() -> dict[str, list[dict[str, Any]]]:
+    """Public accessor for the raw ``{nodes, edges}`` graph (DB-or-seed source).
+
+    Used by exporters (e.g. the Obsidian bridge) that need the unprocessed
+    node/edge records rather than the D3 ``graph_payload`` shape.
+    """
+    return _graph_source()
+
+
 def graph_payload() -> dict[str, Any]:
     """Build a D3-friendly ``{nodes, links}`` payload with colour metadata."""
     graph = _graph_source()
@@ -263,3 +272,101 @@ def settings_view() -> dict[str, Any]:
         view["graph_score_weights"] = weights.get("graph_score", {})
         view["revenue_stream_weights"] = weights.get("revenue_stream_weights", {})
     return view
+
+
+def _store_safe() -> Any:
+    """Return the SQLite asset store, or None if unavailable (never raises)."""
+    try:
+        from database import db_store
+
+        db_store.init_db()
+        return db_store
+    except Exception:  # noqa: BLE001 - dashboard must never 500 on DB issues
+        return None
+
+
+def _pct(actual: float, target: float) -> float:
+    """Progress percentage of actual vs target, clamped to [0, 100]."""
+    if target <= 0:
+        return 0.0
+    return round(min(100.0, max(0.0, actual / target * 100.0)), 1)
+
+
+def os_dashboard() -> dict[str, Any]:
+    """Management-console metrics: mission progress, ROI/budget, portfolio mix.
+
+    Reads realised performance + cost from the SQLite asset store and the
+    monthly targets from ``settings.yaml -> mission``. Degrades to zeros (with
+    targets still shown) when the store or config is unavailable.
+    """
+    settings = _safe_config("settings")
+    mission = settings.get("mission", {}) if isinstance(settings, dict) else {}
+    revenue_target = float(mission.get("monthly_revenue_target_krw", 5_000_000) or 0)
+    subscriber_target = int(mission.get("subscriber_target", 1000) or 0)
+    budget_usd = float(mission.get("monthly_llm_budget_usd", 50.0) or 0)
+
+    store = _store_safe()
+    totals = store.feedback_totals() if store else {}
+    revenue_actual = float(totals.get("revenue", 0.0))
+    subscribers_actual = int(totals.get("subscribers", 0))
+    cost_used = store.cost_total() if store else 0.0
+
+    roi = round((revenue_actual / cost_used), 2) if cost_used > 0 else None
+
+    # Deployments + calibrated-weights history (Phase 7).
+    deployments = store.get_deployments(limit=10) if store else []
+    deploy_mix = store.deployment_mix() if store else []
+    # Newsletter publish history (deployments tagged 'newsletter').
+    newsletter_history = (
+        [d for d in store.get_deployments(limit=100) if d.get("platform") == "newsletter"][:10]
+        if store
+        else []
+    )
+    weights_history = store.get_weights_history(limit=20) if store else []
+    current_weights = weights_history[-1]["weights"] if weights_history else {}
+
+    # Generated content with a Suno audio track (HTML5 player on the dashboard).
+    audio_assets = []
+    visual_assets = []
+    if store:
+        _assets = store.list_generated_content(limit=20)
+        audio_assets = [c for c in _assets if c.get("audio_url")]
+        visual_assets = [c for c in _assets if c.get("image_url")]
+
+    # Portfolio mix: share of generated assets by channel.
+    mix_counts: dict[str, int] = {}
+    for item in content_queue():
+        mix_counts[item["channel"]] = mix_counts.get(item["channel"], 0) + 1
+    total_assets = sum(mix_counts.values()) or 1
+    portfolio = [
+        {"channel": ch, "count": cnt, "share": round(cnt / total_assets * 100, 1)}
+        for ch, cnt in sorted(mix_counts.items(), key=lambda kv: kv[1], reverse=True)
+    ]
+
+    return {
+        "mission": {
+            "revenue_target_krw": revenue_target,
+            "revenue_actual_krw": revenue_actual,
+            "revenue_pct": _pct(revenue_actual, revenue_target),
+            "subscriber_target": subscriber_target,
+            "subscribers_actual": subscribers_actual,
+            "subscriber_pct": _pct(subscribers_actual, subscriber_target),
+        },
+        "finance": {
+            "budget_usd": budget_usd,
+            "cost_used_usd": round(cost_used, 4),
+            "budget_remaining_usd": round(max(0.0, budget_usd - cost_used), 4),
+            "budget_used_pct": _pct(cost_used, budget_usd),
+            "revenue_actual_krw": revenue_actual,
+            "roi": roi,
+        },
+        "portfolio": portfolio,
+        "deployments": deployments,
+        "deploy_mix": deploy_mix,
+        "audio_assets": audio_assets,
+        "visual_assets": visual_assets,
+        "newsletter_history": newsletter_history,
+        "weights_history": weights_history,
+        "current_weights": current_weights,
+        "feedback_samples": int(totals.get("samples", 0)),
+    }

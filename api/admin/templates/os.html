@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% block title %}OS Dashboard{% endblock %}
+
+{% block head %}
+<style>
+  .bar-wrap { background: var(--bg); border: 1px solid var(--border); border-radius: 999px; height: 10px; overflow: hidden; margin-top: 10px; }
+  .bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+  .bar-fill.warn { background: linear-gradient(90deg, var(--warn), var(--danger)); }
+  .goal-row { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .goal-row b { color: var(--text); }
+  .mix-bar { display: flex; height: 14px; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); margin-bottom: 12px; }
+  .mix-seg { height: 100%; }
+  .visual-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
+  .visual-card { background: var(--card, rgba(255,255,255,0.03)); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; backdrop-filter: blur(8px); }
+  .visual-card img { width: 100%; height: 120px; object-fit: cover; display: block; background: #1118; }
+  .visual-meta { padding: 8px 10px; }
+  .visual-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>OS Dashboard</h1>
+<p class="subtitle">1인 AI 지주회사 경영 통제판 — 미션 진척 · 재무/ROI · 포트폴리오 비중</p>
+
+<!-- Mission progress -->
+<div class="panel">
+  <h2>미션 진척도 (Mission Progress)</h2>
+  <div class="cards">
+    <div class="card">
+      <div class="label">이번 달 수익 목표</div>
+      <div class="value">{{ "{:,.0f}".format(os.mission.revenue_actual_krw) }}원</div>
+      <div class="bar-wrap"><div class="bar-fill" style="width: {{ os.mission.revenue_pct }}%"></div></div>
+      <div class="goal-row"><span>{{ os.mission.revenue_pct }}% 달성</span><span>목표 <b>{{ "{:,.0f}".format(os.mission.revenue_target_krw) }}원</b></span></div>
+    </div>
+    <div class="card">
+      <div class="label">구독자 획득 목표</div>
+      <div class="value">{{ "{:,}".format(os.mission.subscribers_actual) }}명</div>
+      <div class="bar-wrap"><div class="bar-fill" style="width: {{ os.mission.subscriber_pct }}%"></div></div>
+      <div class="goal-row"><span>{{ os.mission.subscriber_pct }}% 달성</span><span>목표 <b>{{ "{:,}".format(os.mission.subscriber_target) }}명</b></span></div>
+    </div>
+    <div class="card">
+      <div class="label">피드백 표본 수</div>
+      <div class="value">{{ os.feedback_samples }}</div>
+      <div class="goal-row"><span>L7 자가보정 학습 데이터</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- Finance / ROI -->
+<div class="panel">
+  <h2>재무 및 자원 (Finance &amp; Resource)</h2>
+  <div class="cards">
+    <div class="card">
+      <div class="label">월 예산 소모 (USD)</div>
+      <div class="value">${{ "%.2f"|format(os.finance.cost_used_usd) }}</div>
+      <div class="bar-wrap"><div class="bar-fill {% if os.finance.budget_used_pct > 80 %}warn{% endif %}" style="width: {{ os.finance.budget_used_pct }}%"></div></div>
+      <div class="goal-row"><span>{{ os.finance.budget_used_pct }}% 소모</span><span>예산 <b>${{ "%.2f"|format(os.finance.budget_usd) }}</b></span></div>
+    </div>
+    <div class="card">
+      <div class="label">잔여 예산 (USD)</div>
+      <div class="value">${{ "%.2f"|format(os.finance.budget_remaining_usd) }}</div>
+      <div class="goal-row"><span>남은 자원</span></div>
+    </div>
+    <div class="card">
+      <div class="label">투자수익률 (ROI)</div>
+      <div class="value">{% if os.finance.roi is not none %}{{ os.finance.roi }}x{% else %}—{% endif %}</div>
+      <div class="goal-row"><span>매출 / 비용 (KRW÷USD, 참고용)</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- Portfolio mix -->
+<div class="panel">
+  <h2>포트폴리오 투자 믹스 (Portfolio Mix)</h2>
+  {% if os.portfolio %}
+  <div class="mix-bar">
+    {% set colors = ['#4f9dff', '#27c2a0', '#f5a623', '#a06bff', '#ffd166', '#ff5d73'] %}
+    {% for row in os.portfolio %}
+    <div class="mix-seg" style="width: {{ row.share }}%; background: {{ colors[loop.index0 % colors|length] }};" title="{{ row.channel }} {{ row.share }}%"></div>
+    {% endfor %}
+  </div>
+  <table>
+    <thead><tr><th>채널 (Channel)</th><th>자산 수</th><th>발행 비중</th></tr></thead>
+    <tbody>
+      {% for row in os.portfolio %}
+      <tr><td>{{ row.channel }}</td><td>{{ row.count }}</td><td>{{ row.share }}%</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="subtitle">아직 생성된 자산이 없습니다.</p>
+  {% endif %}
+</div>
+
+<!-- Deployments -->
+<div class="panel">
+  <h2>배포 현황 (Deployments)</h2>
+  {% if os.deploy_mix %}
+  <div class="mix-bar">
+    {% set dcolors = ['#4f9dff', '#27c2a0', '#f5a623', '#a06bff', '#ffd166', '#ff5d73'] %}
+    {% set dtotal = os.deploy_mix | sum(attribute='count') %}
+    {% for row in os.deploy_mix %}
+    <div class="mix-seg" style="width: {{ (row.count / dtotal * 100) if dtotal else 0 }}%; background: {{ dcolors[loop.index0 % dcolors|length] }};" title="{{ row.platform }} ({{ row.count }})"></div>
+    {% endfor %}
+  </div>
+  <table>
+    <thead><tr><th>플랫폼</th><th>콘텐츠 ID</th><th>상태</th><th>링크</th><th>시각</th></tr></thead>
+    <tbody>
+      {% for d in os.deployments %}
+      <tr>
+        <td>{{ d.platform }}</td>
+        <td>{{ d.content_id }}</td>
+        <td>{{ d.status }}</td>
+        <td><a href="{{ d.url }}" target="_blank" rel="noopener">{{ d.url }}</a></td>
+        <td>{{ d.created_at }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="subtitle">아직 배포된 콘텐츠가 없습니다.</p>
+  {% endif %}
+</div>
+
+<!-- Suno background music (Phase 10) -->
+<div class="panel">
+  <h2>자동 생성 음원 (Suno Background Music)</h2>
+  {% if os.audio_assets %}
+  <table>
+    <thead><tr><th>제목</th><th>플랫폼</th><th>플레이어</th></tr></thead>
+    <tbody>
+      {% for a in os.audio_assets %}
+      <tr>
+        <td>{{ a.title }}</td>
+        <td>{{ a.platform }}</td>
+        <td><audio controls preload="none" src="{{ a.audio_url }}" style="height:32px;"></audio></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="subtitle">자동 생성된 음원이 없습니다. (수노 세션 쿠키 미설정 시 텍스트 프롬프트 수동 복사 모드)</p>
+  {% endif %}
+</div>
+
+<!-- Generated visual assets (Phase 11): thumbnails / album covers -->
+<div class="panel">
+  <h2>비주얼 자산 (Thumbnails &amp; Album Covers)</h2>
+  {% if os.visual_assets %}
+  <div class="visual-grid">
+    {% for v in os.visual_assets %}
+    <div class="visual-card">
+      <img src="{{ v.image_url }}" alt="{{ v.title }}" loading="lazy"
+           onerror="this.src='https://images.unsplash.com/photo-1504711434969-e33886168f5c?auto=format&fit=crop&w=800&q=80';" />
+      <div class="visual-meta">
+        <div class="visual-title">{{ v.title }}</div>
+        <div class="subtitle">{{ v.platform or v.format }}</div>
+        {% if v.audio_url %}<audio controls preload="none" src="{{ v.audio_url }}" style="height:30px;width:100%;"></audio>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="subtitle">자동 생성된 이미지가 없습니다. (API 키 미설정 시 카테고리별 기본 썸네일로 대체)</p>
+  {% endif %}
+</div>
+
+<!-- Newsletter publish history (Phase 12) -->
+<div class="panel">
+  <h2>뉴스레터 발행 이력 (Newsletter)</h2>
+  {% if os.newsletter_history %}
+  <table>
+    <thead><tr><th>발행 일시</th><th>콘텐츠 ID</th><th>상태</th><th>링크</th></tr></thead>
+    <tbody>
+      {% for n in os.newsletter_history %}
+      <tr>
+        <td>{{ n.created_at }}</td>
+        <td>{{ n.content_id }}</td>
+        <td>{{ n.status }}</td>
+        <td><a href="{{ n.url }}" target="_blank" rel="noopener">{{ n.url }}</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="subtitle">아직 발행된 뉴스레터가 없습니다.</p>
+  {% endif %}
+</div>
+
+<!-- Weight calibration trend (L7) -->
+<div class="panel">
+  <h2>가중치 자가 보정 추이 (L7 Weight Calibration)</h2>
+  {% if os.current_weights %}
+  <table>
+    <thead><tr><th>가중치 (Component)</th><th>현재 값</th></tr></thead>
+    <tbody>
+      {% for k, v in os.current_weights.items() %}
+      <tr><td>{{ k }}</td><td>{{ "%.4f"|format(v) }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="subtitle">총 {{ os.weights_history|length }}회 보정 스냅샷 누적</p>
+  {% else %}
+  <p class="subtitle">아직 가중치 보정 이력이 없습니다. 성과 피드백 수집 후 보정됩니다.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -151,7 +151,7 @@
     {% for v in os.visual_assets %}
     <div class="visual-card">
       <img src="{{ v.image_url }}" alt="{{ v.title }}" loading="lazy"
-           onerror="this.src='/static/defaults/trend.png';" />
+           onerror="this.src='https://images.unsplash.com/photo-1504711434969-e33886168f5c?auto=format&fit=crop&w=800&q=80';" />
       <div class="visual-meta">
         <div class="visual-title">{{ v.title }}</div>
         <div class="subtitle">{{ v.platform or v.format }}</div>
@@ -162,6 +162,28 @@
   </div>
   {% else %}
   <p class="subtitle">자동 생성된 이미지가 없습니다. (API 키 미설정 시 카테고리별 기본 썸네일로 대체)</p>
+  {% endif %}
+</div>
+
+<!-- Newsletter publish history (Phase 12) -->
+<div class="panel">
+  <h2>뉴스레터 발행 이력 (Newsletter)</h2>
+  {% if os.newsletter_history %}
+  <table>
+    <thead><tr><th>발행 일시</th><th>콘텐츠 ID</th><th>상태</th><th>링크</th></tr></thead>
+    <tbody>
+      {% for n in os.newsletter_history %}
+      <tr>
+        <td>{{ n.created_at }}</td>
+        <td>{{ n.content_id }}</td>
+        <td>{{ n.status }}</td>
+        <td><a href="{{ n.url }}" target="_blank" rel="noopener">{{ n.url }}</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="subtitle">아직 발행된 뉴스레터가 없습니다.</p>
   {% endif %}
 </div>
 

@@ -452,6 +452,76 @@ async def api_generate_image(
         return JSONResponse({"error": f"Image generation failed: {str(exc)}"}, status_code=500)
 
 
+class NewsletterRequest(BaseModel):
+    """Generate or publish a daily-digest newsletter."""
+
+    title: str = "IIGP 데일리 트렌드 다이제스트"
+    english: bool = False
+    limit: int = 10
+    content_id: str | None = None
+
+
+@router.post("/api/generate-newsletter", summary="Assemble a daily-digest newsletter")
+async def api_generate_newsletter(
+    payload: NewsletterRequest, _: None = Depends(verify_admin_key)
+) -> JSONResponse:
+    """Build an HTML+Markdown newsletter from the latest topics and persist it."""
+    try:
+        from content_factory.generators.newsletter_generator import NewsletterGenerator
+        from database.db_store import get_latest_trends, init_db, save_generated_content
+
+        init_db()
+        topics = get_latest_trends(limit=payload.limit)
+        if payload.english:
+            from nlp.translator import Translator
+
+            translator = Translator()
+            topics = [translator.translate_topic(t) for t in topics]
+        nl = NewsletterGenerator().build_digest(
+            topics, title=payload.title, english=payload.english
+        )
+        nl["content_id"] = f"newsletter:{abs(hash(payload.title))}"
+        save_generated_content(nl)
+        return JSONResponse(
+            {
+                "content_id": nl["content_id"],
+                "subject": nl["subject"],
+                "item_count": nl["item_count"],
+                "language": nl["language"],
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Newsletter generation failed: {str(exc)}"}, status_code=500)
+
+
+@router.post("/api/publish-newsletter", summary="Publish a newsletter (Substack/Mailchimp/mock)")
+async def api_publish_newsletter(
+    payload: NewsletterRequest, _: None = Depends(verify_admin_key)
+) -> JSONResponse:
+    """Publish a stored (or freshly assembled) newsletter and record the deployment."""
+    try:
+        from database.db_store import get_generated_content, init_db
+        from publisher.newsletter_publisher import publish
+
+        init_db()
+        newsletter = None
+        if payload.content_id:
+            newsletter = get_generated_content(payload.content_id)
+        if newsletter is None:
+            from content_factory.generators.newsletter_generator import NewsletterGenerator
+            from database.db_store import get_latest_trends
+
+            newsletter = NewsletterGenerator().build_digest(
+                get_latest_trends(limit=payload.limit), title=payload.title
+            )
+            newsletter["content_id"] = (
+                payload.content_id or f"newsletter:{abs(hash(payload.title))}"
+            )
+        return JSONResponse(publish(newsletter))
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Newsletter publish failed: {str(exc)}"}, status_code=500)
+
+
 class PerformanceRequest(BaseModel):
     """Collect (or simulate) performance for a deployed item and calibrate L7."""
 

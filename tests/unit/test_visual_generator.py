@@ -31,8 +31,9 @@ class _HTTP:
 
 
 def test_default_image_category_mapping():
-    assert default_image("IT/테크").endswith("tech.png")
-    assert default_image("unknown").endswith("trend.png")
+    assert "images.unsplash.com" in default_image("IT/테크")
+    assert default_image("IT/테크") != default_image("unknown")
+    assert "images.unsplash.com" in default_image("unknown")
 
 
 def test_no_api_key_returns_category_fallback(monkeypatch):
@@ -42,7 +43,7 @@ def test_no_api_key_returns_category_fallback(monkeypatch):
     out = gen.generate_image("cozy room", "비즈니스")
     assert out["status"] == "fallback"
     assert out["reason"] == "no_api_key"
-    assert out["image_url"].endswith("business.png")
+    assert out["image_url"] == default_image("비즈니스")
 
 
 def test_generate_returns_hosted_url():
@@ -73,7 +74,7 @@ def test_generate_no_image_in_response_falls_back():
     gen = VisualGenerator(api_key="k")
     out = gen.generate_image("x", "사회/종합", http=_HTTP(_Resp({"candidates": []})))
     assert out["status"] == "fallback" and out["reason"] == "no_image_in_response"
-    assert out["image_url"].endswith("society.png")
+    assert out["image_url"] == default_image("사회/종합")
 
 
 def test_generate_http_error_falls_back():
@@ -81,4 +82,4 @@ def test_generate_http_error_falls_back():
     out = gen.generate_image("x", "IT/테크", http=_HTTP(RuntimeError("429 quota")))
     assert out["status"] == "fallback"
     assert "429" in out["reason"]
-    assert out["image_url"].endswith("tech.png")
+    assert out["image_url"] == default_image("IT/테크")

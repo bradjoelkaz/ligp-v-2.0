@@ -24,18 +24,25 @@ _log = get_logger(__name__)
 # Gemini image-capable model endpoint (overridable).
 _DEFAULT_MODEL = os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.0-flash-exp-image-generation")
 
-# Per-category fallback thumbnails served from the app's static assets.
-DEFAULT_IMAGE = "/static/defaults/trend.png"
+# Per-category fallback images — high-quality public Unsplash CDN URLs (no local
+# binary assets required). Keyed by analysis category (KR) with English aliases.
+_UNSPLASH = "?auto=format&fit=crop&w=800&q=80"
+DEFAULT_IMAGE = f"https://images.unsplash.com/photo-1504711434969-e33886168f5c{_UNSPLASH}"
 CATEGORY_DEFAULTS: dict[str, str] = {
-    "IT/테크": "/static/defaults/tech.png",
-    "사회/종합": "/static/defaults/society.png",
-    "비즈니스": "/static/defaults/business.png",
-    "문화/라이프": "/static/defaults/culture.png",
+    "IT/테크": f"https://images.unsplash.com/photo-1518770660439-4636190af475{_UNSPLASH}",
+    "비즈니스": f"https://images.unsplash.com/photo-1454165804606-c3d57bc86b40{_UNSPLASH}",
+    "사회/종합": f"https://images.unsplash.com/photo-1521737604893-d14cc237f11d{_UNSPLASH}",
+    "문화/라이프": f"https://images.unsplash.com/photo-1492684223066-81342ee5ff30{_UNSPLASH}",
+    # English aliases
+    "tech": f"https://images.unsplash.com/photo-1518770660439-4636190af475{_UNSPLASH}",
+    "business": f"https://images.unsplash.com/photo-1454165804606-c3d57bc86b40{_UNSPLASH}",
+    "society": f"https://images.unsplash.com/photo-1521737604893-d14cc237f11d{_UNSPLASH}",
+    "lifestyle": f"https://images.unsplash.com/photo-1492684223066-81342ee5ff30{_UNSPLASH}",
 }
 
 
 def default_image(category: str = "") -> str:
-    """Return the fallback thumbnail path for a category."""
+    """Return the public Unsplash fallback image URL for a category."""
     return CATEGORY_DEFAULTS.get(category, DEFAULT_IMAGE)
 
 

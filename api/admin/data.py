@@ -313,6 +313,12 @@ def os_dashboard() -> dict[str, Any]:
 
     roi = round((revenue_actual / cost_used), 2) if cost_used > 0 else None
 
+    # Deployments + calibrated-weights history (Phase 7).
+    deployments = store.get_deployments(limit=10) if store else []
+    deploy_mix = store.deployment_mix() if store else []
+    weights_history = store.get_weights_history(limit=20) if store else []
+    current_weights = weights_history[-1]["weights"] if weights_history else {}
+
     # Portfolio mix: share of generated assets by channel.
     mix_counts: dict[str, int] = {}
     for item in content_queue():
@@ -341,5 +347,9 @@ def os_dashboard() -> dict[str, Any]:
             "roi": roi,
         },
         "portfolio": portfolio,
+        "deployments": deployments,
+        "deploy_mix": deploy_mix,
+        "weights_history": weights_history,
+        "current_weights": current_weights,
         "feedback_samples": int(totals.get("samples", 0)),
     }

@@ -28,6 +28,38 @@ from utils.logger import get_logger
 _log = get_logger(__name__)
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
+_HANGUL_RE = re.compile(r"[\uac00-\ud7a3]")
+
+# Default country code per source platform (L2 normalization).
+PLATFORM_COUNTRY: dict[str, str] = {
+    "naver": "KR",
+    "google": "KR",
+    "reddit": "US",
+    "hackernews": "US",
+    "techcrunch": "US",
+    "bbc": "GB",
+    "youtube": "",  # global; left blank
+}
+
+
+def detect_language(text: str) -> str:
+    """Cheap language guess: 'ko' if any Hangul present, else 'en'."""
+    return "ko" if _HANGUL_RE.search(text or "") else "en"
+
+
+def enrich_l2(doc: dict[str, Any]) -> dict[str, Any]:
+    """Add L2 metadata (language, country, normalized engagement) in place."""
+    doc.setdefault("language", detect_language(f"{doc.get('title', '')} {doc.get('text', '')}"))
+    doc.setdefault("country", PLATFORM_COUNTRY.get(doc.get("platform", ""), ""))
+    eng = doc.get("engagement") or {}
+    doc["engagement"] = {
+        "views": int(eng.get("views", 0) or 0),
+        "likes": int(eng.get("likes", 0) or 0),
+        "comments": int(eng.get("comments", 0) or 0),
+        "shares": int(eng.get("shares", 0) or 0),
+    }
+    return doc
+
 
 # Global + Korean RSS sources. Naver is handled separately (API first, RSS
 # fallback) inside ``collect_all_feeds``.
@@ -155,6 +187,10 @@ class RedditFeedCollector(BaseFeedCollector):
                         "source_url": link,
                         "platform": "reddit",
                         "published_at": post.get("created_utc", ""),
+                        "engagement": {
+                            "likes": int(post.get("ups", 0) or 0),
+                            "comments": int(post.get("num_comments", 0) or 0),
+                        },
                     }
                 )
         except Exception as exc:  # noqa: BLE001
@@ -319,6 +355,7 @@ class YouTubeFeedCollector(BaseFeedCollector):
         documents: list[dict[str, Any]] = []
         for item in items:
             snippet = item.get("snippet", {})
+            stats = item.get("statistics", {})
             vid = item.get("id", "")
             documents.append(
                 {
@@ -328,6 +365,11 @@ class YouTubeFeedCollector(BaseFeedCollector):
                     "source_url": f"https://www.youtube.com/watch?v={vid}",
                     "platform": "youtube",
                     "published_at": snippet.get("publishedAt", ""),
+                    "engagement": {
+                        "views": int(stats.get("viewCount", 0) or 0),
+                        "likes": int(stats.get("likeCount", 0) or 0),
+                        "comments": int(stats.get("commentCount", 0) or 0),
+                    },
                 }
             )
         return documents
@@ -381,6 +423,10 @@ def collect_all_feeds() -> list[dict[str, Any]]:
             all_docs.extend(yt.collect_channel_rss(channel_id))
     else:
         _log.info("youtube_collection_skipped_no_key_or_channels")
+
+    # L2 normalization: language + country + normalized engagement for every doc.
+    for doc in all_docs:
+        enrich_l2(doc)
 
     _log.info("collect_all_feeds_complete", extra={"raw_count": len(all_docs)})
     return all_docs

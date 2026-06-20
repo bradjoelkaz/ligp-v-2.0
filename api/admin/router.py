@@ -347,6 +347,64 @@ async def api_calibrate(_: None = Depends(verify_admin_key)) -> JSONResponse:
         return JSONResponse({"error": f"Calibration failed: {str(exc)}"}, status_code=500)
 
 
+class DeployRequest(BaseModel):
+    """Deploy a stored content asset to a (virtual) social platform."""
+
+    content_id: str
+    platform: str = "tistory"
+
+
+@router.post("/api/deploy", summary="Virtually deploy a content asset to a platform")
+async def api_deploy(payload: DeployRequest, _: None = Depends(verify_admin_key)) -> JSONResponse:
+    """Deploy a stored content asset; real publisher when keyed, else mock."""
+    try:
+        from database.db_store import get_generated_content, init_db
+        from publisher.deploy_engine import deploy
+
+        init_db()
+        content = get_generated_content(payload.content_id) or {"content_id": payload.content_id}
+        return JSONResponse(deploy(content, payload.platform))
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Deploy failed: {str(exc)}"}, status_code=500)
+
+
+class PerformanceRequest(BaseModel):
+    """Collect (or simulate) performance for a deployed item and calibrate L7."""
+
+    content_id: str
+    platform: str = "unknown"
+    expected_score: float = 0.0
+    features: dict[str, float] | None = None
+    calibrate: bool = True
+
+
+@router.post("/api/collect-performance", summary="Collect performance + run L7 calibration")
+async def api_collect_performance(
+    payload: PerformanceRequest, _: None = Depends(verify_admin_key)
+) -> JSONResponse:
+    """Simulate/collect market performance, persist as feedback, and calibrate."""
+    try:
+        from database.db_store import init_db
+        from feedback_engine.performance_collector import collect_and_calibrate, collect_performance
+
+        init_db()
+        item = {
+            "content_id": payload.content_id,
+            "platform": payload.platform,
+            "expected_score": payload.expected_score,
+            "features": payload.features,
+        }
+        if payload.calibrate:
+            summary = collect_and_calibrate([item])
+            return JSONResponse({"collected": 1, "calibration": summary})
+        result = collect_performance(
+            payload.content_id, payload.platform, payload.expected_score, features=payload.features
+        )
+        return JSONResponse({"collected": 1, **result})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Collect performance failed: {str(exc)}"}, status_code=500)
+
+
 class ScriptRequest(BaseModel):
     """Request to generate a 2-column YouTube script from a topic/node."""
 

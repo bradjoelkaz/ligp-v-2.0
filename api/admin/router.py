@@ -13,6 +13,7 @@ the cold-start seed graph and validated config.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -123,6 +124,12 @@ async def settings_page(request: Request) -> HTMLResponse:
     return _render(request, "settings.html", settings=data.settings_view())
 
 
+@router.get("/trends", response_class=HTMLResponse, summary="Real-time Trends")
+async def trends_page(request: Request) -> HTMLResponse:
+    """Render the real-time news & hot issues trends board."""
+    return _render(request, "trends.html")
+
+
 # -- JSON data endpoints (consumed by the D3 force graph / tiles) ------------
 
 
@@ -142,6 +149,95 @@ async def api_stats() -> JSONResponse:
 @router.get("/api/content-stats", summary="Content generation stats")
 async def api_content_stats() -> JSONResponse:
     return JSONResponse(data.content_stats())
+
+
+# -- real-time trends (collect -> Gemini analysis, cached in-process) --------
+
+# 15-minute in-process cache to avoid hammering the feeds + LLM APIs on every
+# dashboard load. ``force_refresh=true`` bypasses the TTL.
+_cached_trends: dict[str, Any] = {}
+_last_trend_update: float = 0.0
+CACHE_TTL_SECONDS = 900.0  # 15 minutes
+
+
+@router.get("/api/trends", summary="Retrieve real-time clustered trends using Gemini")
+async def api_trends(force_refresh: bool = False) -> JSONResponse:
+    """Collect from Reddit/Naver/Google, run Gemini analysis, persist, and return topics.
+
+    Serves the in-process cache while it is fresh. On a refresh (cache expired or
+    ``force_refresh=true``) it crawls + analyzes, persists raw articles and topics
+    to the local SQLite asset store, and updates the cache. If crawling/LLM fails,
+    it degrades gracefully to the latest topics previously saved in SQLite so the
+    dashboard keeps working offline and across restarts.
+    """
+    global _cached_trends, _last_trend_update
+    now = time.time()
+
+    # Trends asset store (local SQLite); imported lazily to keep import-time light.
+    from database.db_store import (
+        get_latest_trends,
+        init_db,
+        save_raw_articles,
+        save_trend_topics,
+    )
+
+    init_db()
+
+    # Serve a fresh in-process cache without touching the network/LLM.
+    if not force_refresh and _cached_trends and (now - _last_trend_update) < CACHE_TTL_SECONDS:
+        return JSONResponse(_cached_trends)
+
+    try:
+        from ingestion.collectors import collect_all_feeds
+        from nlp.llm_processor import GeminiProcessor
+
+        # 1. Collect live articles and persist the raw documents.
+        articles = collect_all_feeds()
+        save_raw_articles(articles)
+
+        # 2. Cluster into topics (+ Suno / Nano Banana prompts).
+        processor = GeminiProcessor()
+        trends_result = processor.analyze_trends(articles)
+        topics = trends_result.get("topics", [])
+
+        # 3. Persist analyzed topics to SQLite (asset accumulation).
+        save_trend_topics(topics)
+
+        _cached_trends = {
+            "topics": topics,
+            "collected_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
+            "raw_count": len(articles),
+        }
+        _last_trend_update = now
+    except Exception as exc:  # noqa: BLE001 - degrade to persisted history
+        db_topics = get_latest_trends(limit=10)
+        _cached_trends = {
+            "error": f"Failed to crawl online: {str(exc)}. Loaded historical DB topics.",
+            "topics": db_topics,
+            "collected_at": "Offline DB",
+            "raw_count": len(db_topics),
+        }
+
+    return JSONResponse(_cached_trends)
+
+
+@router.get("/api/obsidian-export", summary="Export the knowledge graph to an Obsidian vault")
+async def api_obsidian_export() -> JSONResponse:
+    """Render the current graph (DB-or-seed) as Obsidian Markdown notes.
+
+    Writes one ``.md`` note per node (edges become ``[[wikilinks]]``) plus an
+    index into ``data/obsidian_vault/`` and returns a summary. Degrades to an
+    error payload rather than raising so the dashboard stays responsive.
+    """
+    try:
+        from graph.obsidian_bridge import export_to_vault
+
+        repo_root = Path(__file__).resolve().parents[2]
+        vault_dir = str(repo_root / "data" / "obsidian_vault")
+        summary = export_to_vault(data.graph_records(), vault_dir)
+        return JSONResponse(summary)
+    except Exception as exc:  # noqa: BLE001 - never 500 the admin API
+        return JSONResponse({"error": f"Obsidian export failed: {str(exc)}"}, status_code=500)
 
 
 # -- write endpoints (persist to graph_nodes / graph_edges) ------------------

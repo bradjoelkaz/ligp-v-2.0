@@ -161,5 +161,11 @@ def daily_pipeline() -> dict[str, Any]:  # pragma: no cover - requires prefect +
 
 
 def _collect_live() -> list[dict[str, Any]]:  # pragma: no cover - network
-    """Placeholder live collection; wired to real collectors in production."""
-    return []
+    """Collect raw news and social posts from RSS/Reddit/Naver feeds."""
+    try:
+        from ingestion.collectors import collect_all_feeds
+
+        return collect_all_feeds()
+    except Exception as exc:  # noqa: BLE001 - never crash the pipeline on collection
+        _log.error("live_collection_failed_returning_empty", extra={"error": str(exc)})
+        return []

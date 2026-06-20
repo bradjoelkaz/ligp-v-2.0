@@ -10,6 +10,11 @@
   .goal-row b { color: var(--text); }
   .mix-bar { display: flex; height: 14px; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); margin-bottom: 12px; }
   .mix-seg { height: 100%; }
+  .visual-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
+  .visual-card { background: var(--card, rgba(255,255,255,0.03)); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; backdrop-filter: blur(8px); }
+  .visual-card img { width: 100%; height: 120px; object-fit: cover; display: block; background: #1118; }
+  .visual-meta { padding: 8px 10px; }
+  .visual-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
 </style>
 {% endblock %}
 
@@ -135,6 +140,28 @@
   </table>
   {% else %}
   <p class="subtitle">자동 생성된 음원이 없습니다. (수노 세션 쿠키 미설정 시 텍스트 프롬프트 수동 복사 모드)</p>
+  {% endif %}
+</div>
+
+<!-- Generated visual assets (Phase 11): thumbnails / album covers -->
+<div class="panel">
+  <h2>비주얼 자산 (Thumbnails &amp; Album Covers)</h2>
+  {% if os.visual_assets %}
+  <div class="visual-grid">
+    {% for v in os.visual_assets %}
+    <div class="visual-card">
+      <img src="{{ v.image_url }}" alt="{{ v.title }}" loading="lazy"
+           onerror="this.src='/static/defaults/trend.png';" />
+      <div class="visual-meta">
+        <div class="visual-title">{{ v.title }}</div>
+        <div class="subtitle">{{ v.platform or v.format }}</div>
+        {% if v.audio_url %}<audio controls preload="none" src="{{ v.audio_url }}" style="height:30px;width:100%;"></audio>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="subtitle">자동 생성된 이미지가 없습니다. (API 키 미설정 시 카테고리별 기본 썸네일로 대체)</p>
   {% endif %}
 </div>
 

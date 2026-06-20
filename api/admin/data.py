@@ -321,8 +321,11 @@ def os_dashboard() -> dict[str, Any]:
 
     # Generated content with a Suno audio track (HTML5 player on the dashboard).
     audio_assets = []
+    visual_assets = []
     if store:
-        audio_assets = [c for c in store.list_generated_content(limit=20) if c.get("audio_url")]
+        _assets = store.list_generated_content(limit=20)
+        audio_assets = [c for c in _assets if c.get("audio_url")]
+        visual_assets = [c for c in _assets if c.get("image_url")]
 
     # Portfolio mix: share of generated assets by channel.
     mix_counts: dict[str, int] = {}
@@ -355,6 +358,7 @@ def os_dashboard() -> dict[str, Any]:
         "deployments": deployments,
         "deploy_mix": deploy_mix,
         "audio_assets": audio_assets,
+        "visual_assets": visual_assets,
         "weights_history": weights_history,
         "current_weights": current_weights,
         "feedback_samples": int(totals.get("samples", 0)),

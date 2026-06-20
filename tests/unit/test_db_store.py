@@ -338,3 +338,23 @@ def test_generated_content_without_audio_lists_empty_url(store):
     store.save_generated_content({"content_id": "b1", "format": "blog", "title": "t"})
     listing = store.list_generated_content()
     assert listing[0]["audio_url"] in ("", None)
+
+
+# --- Phase 11: image_url on generated content -------------------------------
+
+
+def test_generated_content_image_url_roundtrip(store):
+    store.save_generated_content(
+        {
+            "content_id": "v1",
+            "format": "visual",
+            "title": "Cover",
+            "image_url": "https://cdn/cover.png",
+            "audio_url": "https://cdn/audio.mp3",
+        }
+    )
+    got = store.get_generated_content("v1")
+    assert got["image_url"] == "https://cdn/cover.png"
+    listing = store.list_generated_content()
+    assert listing[0]["image_url"] == "https://cdn/cover.png"
+    assert listing[0]["audio_url"] == "https://cdn/audio.mp3"

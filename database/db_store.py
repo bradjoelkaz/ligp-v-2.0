@@ -147,14 +147,16 @@ def init_db() -> None:
                     title TEXT,
                     body TEXT,
                     audio_url TEXT,
+                    image_url TEXT,
                     payload TEXT,            -- full JSON content object
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
                 """)
-            try:
-                cursor.execute("ALTER TABLE generated_content ADD COLUMN audio_url TEXT")
-            except sqlite3.OperationalError:
-                pass  # column already exists
+            for _gc_col in ("audio_url", "image_url"):
+                try:
+                    cursor.execute(f"ALTER TABLE generated_content ADD COLUMN {_gc_col} TEXT")
+                except sqlite3.OperationalError:
+                    pass  # column already exists
 
             # 8. Deployment ledger (virtual multi-channel publishing).
             cursor.execute("""
@@ -530,8 +532,8 @@ def save_generated_content(content: dict[str, Any]) -> str:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO generated_content
-                    (content_id, format, platform, title, body, audio_url, payload)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (content_id, format, platform, title, body, audio_url, image_url, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     content_id,
@@ -540,6 +542,7 @@ def save_generated_content(content: dict[str, Any]) -> str:
                     content.get("title", ""),
                     content.get("body", ""),
                     content.get("audio_url", ""),
+                    content.get("image_url", ""),
                     json.dumps(content, ensure_ascii=False),
                 ),
             )
@@ -573,7 +576,7 @@ def list_generated_content(limit: int = 50) -> list[dict[str, Any]]:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
-                SELECT content_id, format, platform, title, audio_url, created_at
+                SELECT content_id, format, platform, title, audio_url, image_url, created_at
                 FROM generated_content
                 ORDER BY created_at DESC, rowid DESC
                 LIMIT ?

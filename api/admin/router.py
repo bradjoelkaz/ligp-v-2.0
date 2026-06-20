@@ -416,6 +416,42 @@ async def api_generate_music(
         return JSONResponse({"error": f"Music generation failed: {str(exc)}"}, status_code=500)
 
 
+class ImageRequest(BaseModel):
+    """Generate a thumbnail/cover image from a prompt and attach it to content."""
+
+    image_prompt: str
+    category: str = ""
+    title: str = ""
+    content_id: str | None = None
+
+
+@router.post("/api/generate-image", summary="Generate a thumbnail/cover image (Gemini, fallback)")
+async def api_generate_image(
+    payload: ImageRequest, _: None = Depends(verify_admin_key)
+) -> JSONResponse:
+    """Generate an image via Gemini; persist image_url, else a category default."""
+    try:
+        from content_factory.visual_generator import VisualGenerator
+        from database.db_store import get_generated_content, init_db, save_generated_content
+
+        init_db()
+        cid = payload.content_id or f"image:{abs(hash(payload.image_prompt))}"
+        result = VisualGenerator().generate_image(
+            payload.image_prompt, payload.category, content_id=cid
+        )
+        if payload.content_id:
+            content = get_generated_content(payload.content_id) or {"content_id": cid}
+        else:
+            content = {"content_id": cid, "format": "visual", "title": payload.title or "Visual"}
+        content["image_url"] = result.get("image_url", "")
+        content["image_prompt"] = payload.image_prompt
+        content["image_status"] = result.get("status")
+        save_generated_content(content)
+        return JSONResponse({**result, "content_id": cid})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Image generation failed: {str(exc)}"}, status_code=500)
+
+
 class PerformanceRequest(BaseModel):
     """Collect (or simulate) performance for a deployed item and calibrate L7."""
 

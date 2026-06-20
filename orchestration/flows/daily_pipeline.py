@@ -9,6 +9,7 @@ test drives).
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any
 
@@ -142,6 +143,49 @@ def _run_daily_pipeline(
     return summary
 
 
+def auto_generate_music(
+    topics: list[dict[str, Any]], *, store: Any | None = None, limit: int = 3
+) -> int:
+    """Optionally auto-generate Suno tracks for top topics (opt-in).
+
+    Disabled by default to protect Suno credits; runs only when
+    ``AUTO_GENERATE_MUSIC`` is truthy. Returns the number of tracks persisted.
+    Never raises (each generation is best-effort).
+    """
+    if os.getenv("AUTO_GENERATE_MUSIC", "").strip().lower() not in ("1", "true", "yes", "on"):
+        return 0
+    try:
+        from content_factory.suno_generator import SunoGenerator
+        from database import db_store
+
+        store = store or db_store
+        store.init_db()
+        gen = SunoGenerator()
+        saved = 0
+        for i, topic in enumerate(topics[:limit]):
+            prompt = topic.get("suno_prompt") or topic.get("title", "")
+            if not prompt:
+                continue
+            result = gen.generate(prompt, topic.get("image_prompt", ""))
+            store.save_generated_content(
+                {
+                    "content_id": f"music:topic:{i}:{abs(hash(prompt))}",
+                    "format": "suno_music",
+                    "title": topic.get("title", "Suno Track"),
+                    "audio_url": result.get("audio_url", ""),
+                    "suno_status": result.get("status"),
+                    "suno_prompt": prompt,
+                    "image_prompt": topic.get("image_prompt", ""),
+                }
+            )
+            saved += 1
+        _log.info("auto_generate_music_done", extra={"saved": saved})
+        return saved
+    except Exception as exc:  # noqa: BLE001 - never break the pipeline
+        _log.warning("auto_generate_music_failed", extra={"error": str(exc)})
+        return 0
+
+
 def _live_run() -> dict[str, Any]:  # pragma: no cover - requires prefect + collectors
     """Collect live data, persist L2 docs, run the pipeline, push metrics."""
     from api.metrics import push_metrics
@@ -167,6 +211,11 @@ def _live_run() -> dict[str, Any]:  # pragma: no cover - requires prefect + coll
         result = _flow()
     except Exception:
         result = run_daily_pipeline(docs)
+    # Opt-in Suno auto-generation (AUTO_GENERATE_MUSIC); no-op by default.
+    try:
+        auto_generate_music(result.get("topics", []) if isinstance(result, dict) else [])
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("auto_music_in_pipeline_failed", extra={"error": str(exc)})
     push_metrics(job="iigp-daily-pipeline")
     return result
 

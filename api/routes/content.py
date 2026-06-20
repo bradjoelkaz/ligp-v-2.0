@@ -79,6 +79,22 @@ def _update_status(
         repo.db.close()
 
 
+def _save_generated(content: dict[str, Any]) -> None:
+    """Persist a finished content asset to the local SQLite store (best-effort).
+
+    Stores the full content object (including quality/critique metrics) in the
+    ``generated_content`` table so ``GET /content/{id}`` can serve it without a
+    relational DATABASE_URL. Never raises into the caller.
+    """
+    try:
+        from database.db_store import init_db, save_generated_content
+
+        init_db()
+        save_generated_content(content)
+    except Exception:  # noqa: BLE001
+        _log.warning("generated_content_save_failed", extra={"id": content.get("content_id")})
+
+
 async def _process_content(
     content_id: str, node_id: str, name: str, platform: str, tags: list[str]
 ) -> None:
@@ -97,6 +113,8 @@ async def _process_content(
         passed, issues = QualityGate().check(content, platform)
         content["quality_passed"] = passed
         content["quality_issues"] = issues
+        content["content_id"] = content_id
+        _save_generated(content)
         _update_status(content_id, "completed", result=json.dumps(content, default=str))
         from api.metrics import record_content_generated
 
@@ -126,8 +144,9 @@ async def _generate_blocking(
     record_content_generated(platform, passed)
     content_id = str(uuid.uuid4())
     _persist_pending(content_id, content.get("title", ""), platform)
-    _update_status(content_id, "completed", result=json.dumps(content, default=str))
     content["content_id"] = content_id
+    _save_generated(content)
+    _update_status(content_id, "completed", result=json.dumps(content, default=str))
     return content
 
 
@@ -222,6 +241,13 @@ def get_router():  # pragma: no cover - requires fastapi
 
     @router.get("/{content_id}")
     async def get_content(content_id: str) -> dict[str, Any]:
-        raise HTTPException(status_code=404, detail="content store not wired in this build")
+        """Return a generated content asset from the local SQLite store."""
+        from database.db_store import get_generated_content, init_db
+
+        init_db()
+        content = get_generated_content(content_id)
+        if content is None:
+            raise HTTPException(status_code=404, detail="content not found")
+        return content
 
     return router

@@ -13,6 +13,7 @@ the cold-start seed graph and validated config.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,9 @@ from pydantic import BaseModel
 
 from api.admin import data
 from api.metrics import metrics_snapshot, record_graph_size
+from utils.logger import get_logger
+
+_log = get_logger(__name__)
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
@@ -123,6 +127,18 @@ async def settings_page(request: Request) -> HTMLResponse:
     return _render(request, "settings.html", settings=data.settings_view())
 
 
+@router.get("/trends", response_class=HTMLResponse, summary="Real-time Trends")
+async def trends_page(request: Request) -> HTMLResponse:
+    """Render the real-time news & hot issues trends board."""
+    return _render(request, "trends.html")
+
+
+@router.get("/os", response_class=HTMLResponse, summary="OS management dashboard")
+async def os_page(request: Request) -> HTMLResponse:
+    """Render the 1-person AI holding-company management console."""
+    return _render(request, "os.html", os=data.os_dashboard())
+
+
 # -- JSON data endpoints (consumed by the D3 force graph / tiles) ------------
 
 
@@ -142,6 +158,464 @@ async def api_stats() -> JSONResponse:
 @router.get("/api/content-stats", summary="Content generation stats")
 async def api_content_stats() -> JSONResponse:
     return JSONResponse(data.content_stats())
+
+
+# -- real-time trends (collect -> Gemini analysis, cached in-process) --------
+
+# 15-minute in-process cache to avoid hammering the feeds + LLM APIs on every
+# dashboard load. ``force_refresh=true`` bypasses the TTL.
+_cached_trends: dict[str, Any] = {}
+_last_trend_update: float = 0.0
+CACHE_TTL_SECONDS = 900.0  # 15 minutes
+
+
+@router.get("/api/trends", summary="Retrieve real-time clustered trends using Gemini")
+async def api_trends(force_refresh: bool = False) -> JSONResponse:
+    """Collect from Reddit/Naver/Google, run Gemini analysis, persist, and return topics.
+
+    Serves the in-process cache while it is fresh. On a refresh (cache expired or
+    ``force_refresh=true``) it crawls + analyzes, persists raw articles and topics
+    to the local SQLite asset store, and updates the cache. If crawling/LLM fails,
+    it degrades gracefully to the latest topics previously saved in SQLite so the
+    dashboard keeps working offline and across restarts.
+    """
+    global _cached_trends, _last_trend_update
+    now = time.time()
+
+    # Trends asset store (local SQLite); imported lazily to keep import-time light.
+    from database.db_store import (
+        get_latest_trends,
+        init_db,
+        save_raw_articles,
+        save_trend_topics,
+    )
+
+    init_db()
+
+    # Serve a fresh in-process cache without touching the network/LLM.
+    if not force_refresh and _cached_trends and (now - _last_trend_update) < CACHE_TTL_SECONDS:
+        return JSONResponse(_cached_trends)
+
+    try:
+        from ingestion.collectors import collect_all_feeds
+        from nlp.llm_processor import GeminiProcessor
+
+        # 1. Collect live articles and persist the raw documents.
+        articles = collect_all_feeds()
+        save_raw_articles(articles)
+
+        # 2. Cluster into topics (+ Suno / Nano Banana prompts).
+        processor = GeminiProcessor()
+        trends_result = processor.analyze_trends(articles)
+        topics = trends_result.get("topics", [])
+
+        # 3. Persist analyzed topics to SQLite (asset accumulation).
+        save_trend_topics(topics)
+
+        # 3b. Record an estimated LLM spend (only when a real key is configured,
+        #     i.e. not the mock fallback) so the OS dashboard ROI reflects cost.
+        if os.getenv("OPENROUTER_API_KEY") or os.getenv("GEMINI_API_KEY"):
+            try:
+                from database.db_store import record_cost
+
+                record_cost("llm:analyze_trends", 0.002)
+            except Exception:  # noqa: BLE001 - cost ledger is best-effort
+                pass
+
+        # 4. Record a Layer-4 volume snapshot for the tracked graph terms so
+        #    velocity/acceleration can be computed from real history over time.
+        try:
+            from time_engine.volume_tracker import record_snapshot
+
+            terms = [n.get("name", "") for n in data.graph_records().get("nodes", [])]
+            record_snapshot(articles, terms)
+        except Exception as snap_exc:  # noqa: BLE001 - snapshot is best-effort
+            _log.warning("trend_volume_snapshot_failed", extra={"error": str(snap_exc)})
+
+        _cached_trends = {
+            "topics": topics,
+            "collected_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
+            "raw_count": len(articles),
+        }
+        _last_trend_update = now
+    except Exception as exc:  # noqa: BLE001 - degrade to persisted history
+        db_topics = get_latest_trends(limit=10)
+        _cached_trends = {
+            "error": f"Failed to crawl online: {str(exc)}. Loaded historical DB topics.",
+            "topics": db_topics,
+            "collected_at": "Offline DB",
+            "raw_count": len(db_topics),
+        }
+
+    return JSONResponse(_cached_trends)
+
+
+@router.get("/api/obsidian-export", summary="Export the knowledge graph to an Obsidian vault")
+async def api_obsidian_export() -> JSONResponse:
+    """Render the current graph (DB-or-seed) as Obsidian Markdown notes.
+
+    Writes one ``.md`` note per node (edges become ``[[wikilinks]]``) plus an
+    index into ``data/obsidian_vault/`` and returns a summary. Degrades to an
+    error payload rather than raising so the dashboard stays responsive.
+    """
+    try:
+        from graph.obsidian_bridge import export_to_vault
+
+        repo_root = Path(__file__).resolve().parents[2]
+        vault_dir = str(repo_root / "data" / "obsidian_vault")
+        summary = export_to_vault(data.graph_records(), vault_dir)
+        return JSONResponse(summary)
+    except Exception as exc:  # noqa: BLE001 - never 500 the admin API
+        return JSONResponse({"error": f"Obsidian export failed: {str(exc)}"}, status_code=500)
+
+
+@router.get("/api/trend-velocity", summary="Computed velocity/acceleration per tracked term")
+async def api_trend_velocity() -> JSONResponse:
+    """Compute real Layer-4 trend metrics from the persisted volume time-series.
+
+    Reads the accumulated ``term_volume`` history for each knowledge-graph term
+    and runs :class:`TrendDetector` to produce velocity, acceleration and trend
+    state. Read-only: history is accrued by ``/api/trends`` refreshes.
+    """
+    try:
+        from database.db_store import init_db
+        from time_engine.volume_tracker import analyze_tracked
+
+        init_db()
+        terms = [n.get("name", "") for n in data.graph_records().get("nodes", [])]
+        tracked = analyze_tracked(terms)
+        return JSONResponse({"tracked": tracked, "terms": len(terms), "count": len(tracked)})
+    except Exception as exc:  # noqa: BLE001 - never 500 the admin API
+        return JSONResponse({"error": f"Trend velocity failed: {str(exc)}"}, status_code=500)
+
+
+@router.get("/api/os-metrics", summary="OS dashboard metrics (mission/finance/portfolio)")
+async def api_os_metrics() -> JSONResponse:
+    """Return the management-console metrics as JSON."""
+    return JSONResponse(data.os_dashboard())
+
+
+class FeedbackIn(BaseModel):
+    """Performance feedback for one published content item (L7 input)."""
+
+    content_id: str
+    platform: str = "unknown"
+    expected_score: float = 0.0
+    features: dict[str, float] | None = None
+    views: int = 0
+    clicks: int = 0
+    subscribers: int = 0
+    revenue: float = 0.0
+
+
+@router.post("/api/feedback", summary="Record content performance feedback (L7)")
+async def api_record_feedback(
+    payload: FeedbackIn, _: None = Depends(verify_admin_key)
+) -> JSONResponse:
+    """Persist a performance-feedback record for the calibration loop."""
+    try:
+        from feedback_engine.feedback_loop import record_performance
+
+        metrics = {
+            "views": payload.views,
+            "clicks": payload.clicks,
+            "subscribers": payload.subscribers,
+            "revenue": payload.revenue,
+        }
+        actual = record_performance(
+            payload.content_id,
+            payload.platform,
+            payload.expected_score,
+            metrics,
+            features=payload.features,
+        )
+        return JSONResponse({"recorded": True, "actual_score": actual})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Feedback record failed: {str(exc)}"}, status_code=500)
+
+
+@router.post("/api/calibrate", summary="Run L7 weight self-calibration")
+async def api_calibrate(_: None = Depends(verify_admin_key)) -> JSONResponse:
+    """Run one calibration pass and persist updated opportunity-score weights."""
+    try:
+        from database.db_store import init_db
+        from feedback_engine.feedback_loop import calibrate
+
+        init_db()
+        return JSONResponse(calibrate())
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Calibration failed: {str(exc)}"}, status_code=500)
+
+
+class DeployRequest(BaseModel):
+    """Deploy a stored content asset to a (virtual) social platform."""
+
+    content_id: str
+    platform: str = "tistory"
+
+
+@router.post("/api/deploy", summary="Virtually deploy a content asset to a platform")
+async def api_deploy(payload: DeployRequest, _: None = Depends(verify_admin_key)) -> JSONResponse:
+    """Deploy a stored content asset; real publisher when keyed, else mock."""
+    try:
+        from database.db_store import get_generated_content, init_db
+        from publisher.deploy_engine import deploy
+
+        init_db()
+        content = get_generated_content(payload.content_id) or {"content_id": payload.content_id}
+        return JSONResponse(deploy(content, payload.platform))
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Deploy failed: {str(exc)}"}, status_code=500)
+
+
+class MusicRequest(BaseModel):
+    """Generate a Suno track from prompts and attach it to a content asset."""
+
+    suno_prompt: str
+    image_prompt: str = ""
+    title: str = ""
+    instrumental: bool = True
+    content_id: str | None = None
+
+
+@router.post("/api/generate-music", summary="Generate Suno music (cookie session, zero-cost)")
+async def api_generate_music(
+    payload: MusicRequest, _: None = Depends(verify_admin_key)
+) -> JSONResponse:
+    """Generate music via the Suno Pro session; persist audio_url, else fallback card."""
+    try:
+        from content_factory.suno_generator import SunoGenerator
+        from database.db_store import get_generated_content, init_db, save_generated_content
+
+        init_db()
+        result = SunoGenerator().generate(
+            payload.suno_prompt,
+            payload.image_prompt,
+            instrumental=payload.instrumental,
+            title=payload.title,
+        )
+        # Attach the audio to an existing content asset (or create a music asset).
+        if payload.content_id:
+            content = get_generated_content(payload.content_id) or {
+                "content_id": payload.content_id
+            }
+        else:
+            content = {
+                "content_id": f"music:{abs(hash(payload.suno_prompt))}",
+                "format": "suno_music",
+                "title": payload.title or "Suno Track",
+            }
+        content["audio_url"] = result.get("audio_url", "")
+        content["image_url"] = result.get("image_url", "")
+        content["suno_status"] = result.get("status")
+        content["suno_prompt"] = payload.suno_prompt
+        content["image_prompt"] = payload.image_prompt
+        save_generated_content(content)
+        return JSONResponse({**result, "content_id": content["content_id"]})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Music generation failed: {str(exc)}"}, status_code=500)
+
+
+class ImageRequest(BaseModel):
+    """Generate a thumbnail/cover image from a prompt and attach it to content."""
+
+    image_prompt: str
+    category: str = ""
+    title: str = ""
+    content_id: str | None = None
+
+
+@router.post("/api/generate-image", summary="Generate a thumbnail/cover image (Gemini, fallback)")
+async def api_generate_image(
+    payload: ImageRequest, _: None = Depends(verify_admin_key)
+) -> JSONResponse:
+    """Generate an image via Gemini; persist image_url, else a category default."""
+    try:
+        from content_factory.visual_generator import VisualGenerator
+        from database.db_store import get_generated_content, init_db, save_generated_content
+
+        init_db()
+        cid = payload.content_id or f"image:{abs(hash(payload.image_prompt))}"
+        result = VisualGenerator().generate_image(
+            payload.image_prompt, payload.category, content_id=cid
+        )
+        if payload.content_id:
+            content = get_generated_content(payload.content_id) or {"content_id": cid}
+        else:
+            content = {"content_id": cid, "format": "visual", "title": payload.title or "Visual"}
+        content["image_url"] = result.get("image_url", "")
+        content["image_prompt"] = payload.image_prompt
+        content["image_status"] = result.get("status")
+        save_generated_content(content)
+        return JSONResponse({**result, "content_id": cid})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Image generation failed: {str(exc)}"}, status_code=500)
+
+
+class NewsletterRequest(BaseModel):
+    """Generate or publish a daily-digest newsletter."""
+
+    title: str = "IIGP 데일리 트렌드 다이제스트"
+    english: bool = False
+    limit: int = 10
+    content_id: str | None = None
+
+
+@router.post("/api/generate-newsletter", summary="Assemble a daily-digest newsletter")
+async def api_generate_newsletter(
+    payload: NewsletterRequest, _: None = Depends(verify_admin_key)
+) -> JSONResponse:
+    """Build an HTML+Markdown newsletter from the latest topics and persist it."""
+    try:
+        from content_factory.generators.newsletter_generator import NewsletterGenerator
+        from database.db_store import get_latest_trends, init_db, save_generated_content
+
+        init_db()
+        topics = get_latest_trends(limit=payload.limit)
+        if payload.english:
+            from nlp.translator import Translator
+
+            translator = Translator()
+            topics = [translator.translate_topic(t) for t in topics]
+        nl = NewsletterGenerator().build_digest(
+            topics, title=payload.title, english=payload.english
+        )
+        nl["content_id"] = f"newsletter:{abs(hash(payload.title))}"
+        save_generated_content(nl)
+        return JSONResponse(
+            {
+                "content_id": nl["content_id"],
+                "subject": nl["subject"],
+                "item_count": nl["item_count"],
+                "language": nl["language"],
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Newsletter generation failed: {str(exc)}"}, status_code=500)
+
+
+@router.post("/api/publish-newsletter", summary="Publish a newsletter (Substack/Mailchimp/mock)")
+async def api_publish_newsletter(
+    payload: NewsletterRequest, _: None = Depends(verify_admin_key)
+) -> JSONResponse:
+    """Publish a stored (or freshly assembled) newsletter and record the deployment."""
+    try:
+        from database.db_store import get_generated_content, init_db
+        from publisher.newsletter_publisher import publish
+
+        init_db()
+        newsletter = None
+        if payload.content_id:
+            newsletter = get_generated_content(payload.content_id)
+        if newsletter is None:
+            from content_factory.generators.newsletter_generator import NewsletterGenerator
+            from database.db_store import get_latest_trends
+
+            newsletter = NewsletterGenerator().build_digest(
+                get_latest_trends(limit=payload.limit), title=payload.title
+            )
+            newsletter["content_id"] = (
+                payload.content_id or f"newsletter:{abs(hash(payload.title))}"
+            )
+        return JSONResponse(publish(newsletter))
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Newsletter publish failed: {str(exc)}"}, status_code=500)
+
+
+class PerformanceRequest(BaseModel):
+    """Collect (or simulate) performance for a deployed item and calibrate L7."""
+
+    content_id: str
+    platform: str = "unknown"
+    expected_score: float = 0.0
+    features: dict[str, float] | None = None
+    calibrate: bool = True
+
+
+@router.post("/api/collect-performance", summary="Collect performance + run L7 calibration")
+async def api_collect_performance(
+    payload: PerformanceRequest, _: None = Depends(verify_admin_key)
+) -> JSONResponse:
+    """Simulate/collect market performance, persist as feedback, and calibrate."""
+    try:
+        from database.db_store import init_db
+        from feedback_engine.performance_collector import collect_and_calibrate, collect_performance
+
+        init_db()
+        item = {
+            "content_id": payload.content_id,
+            "platform": payload.platform,
+            "expected_score": payload.expected_score,
+            "features": payload.features,
+        }
+        if payload.calibrate:
+            summary = collect_and_calibrate([item])
+            return JSONResponse({"collected": 1, "calibration": summary})
+        result = collect_performance(
+            payload.content_id, payload.platform, payload.expected_score, features=payload.features
+        )
+        return JSONResponse({"collected": 1, **result})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Collect performance failed: {str(exc)}"}, status_code=500)
+
+
+class ScriptRequest(BaseModel):
+    """Request to generate a 2-column YouTube script from a topic/node."""
+
+    title: str
+    summary: str = ""
+    platform: str = "youtube_long"  # youtube_long | youtube_shorts
+    entities: list[dict[str, str]] | None = None
+
+
+@router.post("/api/generate-script", summary="Generate + persist a 2-column YouTube script")
+async def api_generate_script(
+    payload: ScriptRequest, _: None = Depends(verify_admin_key)
+) -> JSONResponse:
+    """Generate a 2-column YouTube video script and store it (INSERT OR REPLACE)."""
+    try:
+        from content_factory.generators.youtube_script_generator import YouTubeScriptGenerator
+        from database.db_store import init_db, save_generated_content
+
+        init_db()
+        node = {
+            "title": payload.title,
+            "summary": payload.summary,
+            "entities": payload.entities or [],
+        }
+        content = YouTubeScriptGenerator().generate(node, platform=payload.platform)
+        content_id = save_generated_content(content)
+        content["content_id"] = content_id
+        return JSONResponse(content)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Script generation failed: {str(exc)}"}, status_code=500)
+
+
+@router.get("/api/content", summary="List recent generated content assets")
+async def api_list_content() -> JSONResponse:
+    """Return metadata for recently generated content assets."""
+    try:
+        from database.db_store import init_db, list_generated_content
+
+        init_db()
+        return JSONResponse({"items": list_generated_content()})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"List content failed: {str(exc)}"}, status_code=500)
+
+
+@router.get("/api/content/{content_id}", summary="Fetch one generated content asset")
+async def api_get_content(content_id: str) -> JSONResponse:
+    """Return a single generated content asset (e.g. a YouTube script) by id."""
+    try:
+        from database.db_store import get_generated_content, init_db
+
+        init_db()
+        content = get_generated_content(content_id)
+        if content is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse(content)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Get content failed: {str(exc)}"}, status_code=500)
 
 
 # -- write endpoints (persist to graph_nodes / graph_edges) ------------------

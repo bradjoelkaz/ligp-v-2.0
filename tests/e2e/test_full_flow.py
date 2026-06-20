@@ -111,3 +111,55 @@ def test_admin_auth_and_cors(db_url, monkeypatch):
         )
         assert pre.status_code in (200, 204)
         assert "access-control-allow-origin" in {k.lower() for k in pre.headers}
+
+
+# --------------------------------------------------------------------------
+# Scenario 4: Phase 7 deploy -> performance -> OS dashboard render
+# --------------------------------------------------------------------------
+@pytest.mark.e2e
+def test_deploy_performance_and_os_dashboard(db_url, tmp_path, monkeypatch):
+    import database.db_store as db_store
+
+    monkeypatch.setattr(db_store, "DB_PATH", str(tmp_path / "os_e2e.db"))
+    monkeypatch.setenv("ADMIN_API_KEY", "e2e-secret")
+    key = {"X-API-Key": "e2e-secret"}
+
+    with TestClient(create_app()) as client:
+        # Generate + persist a YouTube script (Phase 6), then fetch it (Phase 6).
+        gen = client.post(
+            "/admin/api/generate-script",
+            json={"title": "AI 반도체", "summary": "칩 경쟁", "platform": "youtube_shorts"},
+            headers=key,
+        )
+        assert gen.status_code == 200
+        cid = gen.json()["content_id"]
+        assert client.get(f"/content/{cid}").status_code == 200
+
+        # Virtually deploy it (Phase 7) -> mock success recorded.
+        dep = client.post(
+            "/admin/api/deploy", json={"content_id": cid, "platform": "tistory"}, headers=key
+        )
+        assert dep.status_code == 200 and dep.json()["status"] == "mock"
+
+        # Collect performance + calibrate (Phase 7) -> feedback + weights_history.
+        perf = client.post(
+            "/admin/api/collect-performance",
+            json={
+                "content_id": cid,
+                "platform": "tistory",
+                "expected_score": 0.2,
+                "features": {"w_trend": 1.0},
+            },
+            headers=key,
+        )
+        assert perf.status_code == 200 and perf.json()["calibration"]["samples"] >= 1
+
+        # OS metrics JSON reflects the deployment + weight history.
+        metrics = client.get("/admin/api/os-metrics").json()
+        assert metrics["deploy_mix"], "deploy mix should be populated"
+        assert metrics["current_weights"], "calibrated weights should be present"
+
+        # The /admin/os page renders without template errors.
+        page = client.get("/admin/os")
+        assert page.status_code == 200
+        assert "Deployments" in page.text or "배포" in page.text

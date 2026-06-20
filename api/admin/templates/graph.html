@@ -20,8 +20,10 @@
 
   <div class="graph-controls">
     <button id="refresh-btn" title="Refresh now">Refresh</button>
+    <button id="obsidian-btn" title="Export the graph to an Obsidian vault (data/obsidian_vault)">Export to Obsidian</button>
     <label><input type="checkbox" id="auto-poll" checked> Auto-refresh</label>
     <span><i id="status-dot"></i> <span id="last-updated">Updated: —</span></span>
+    <span id="obsidian-status" style="color: var(--muted);"></span>
   </div>
 
   <div class="legend">
@@ -172,6 +174,23 @@
   document.getElementById("auto-poll").onchange = function () {
     autoPoll = this.checked;
     scheduleNext();
+  };
+
+  // Export the current knowledge graph to an Obsidian vault of Markdown notes.
+  document.getElementById("obsidian-btn").onclick = async function () {
+    const status = document.getElementById("obsidian-status");
+    this.disabled = true;
+    status.textContent = "Exporting…";
+    try {
+      const res = await fetch("/admin/api/obsidian-export");
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || "HTTP " + res.status);
+      status.textContent = `Exported ${data.node_files} notes → ${data.vault_dir}`;
+    } catch (e) {
+      status.textContent = "Export failed: " + e.message;
+    } finally {
+      this.disabled = false;
+    }
   };
 
   // Initial load + start polling.

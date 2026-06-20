@@ -35,6 +35,7 @@ data/embeddings/*
 data/events/*
 data/time_series/*
 data/feedback/*
+data/obsidian_vault/
 !data/**/.gitkeep
 !data/seed/*.json
 *.db

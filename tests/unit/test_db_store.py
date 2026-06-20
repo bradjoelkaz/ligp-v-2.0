@@ -313,3 +313,28 @@ def test_health_check_error_on_bad_path(tmp_path, monkeypatch):
     report = db_store.health_check()
     assert report["ok"] is False
     assert "error" in report
+
+
+# --- Phase 10: audio_url on generated content -------------------------------
+
+
+def test_generated_content_audio_url_roundtrip(store):
+    store.save_generated_content(
+        {
+            "content_id": "m1",
+            "format": "suno_music",
+            "platform": "youtube",
+            "title": "BGM",
+            "audio_url": "https://cdn/audio.mp3",
+        }
+    )
+    got = store.get_generated_content("m1")
+    assert got["audio_url"] == "https://cdn/audio.mp3"
+    listing = store.list_generated_content()
+    assert listing[0]["audio_url"] == "https://cdn/audio.mp3"
+
+
+def test_generated_content_without_audio_lists_empty_url(store):
+    store.save_generated_content({"content_id": "b1", "format": "blog", "title": "t"})
+    listing = store.list_generated_content()
+    assert listing[0]["audio_url"] in ("", None)

@@ -117,6 +117,27 @@
   {% endif %}
 </div>
 
+<!-- Suno background music (Phase 10) -->
+<div class="panel">
+  <h2>자동 생성 음원 (Suno Background Music)</h2>
+  {% if os.audio_assets %}
+  <table>
+    <thead><tr><th>제목</th><th>플랫폼</th><th>플레이어</th></tr></thead>
+    <tbody>
+      {% for a in os.audio_assets %}
+      <tr>
+        <td>{{ a.title }}</td>
+        <td>{{ a.platform }}</td>
+        <td><audio controls preload="none" src="{{ a.audio_url }}" style="height:32px;"></audio></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="subtitle">자동 생성된 음원이 없습니다. (수노 세션 쿠키 미설정 시 텍스트 프롬프트 수동 복사 모드)</p>
+  {% endif %}
+</div>
+
 <!-- Weight calibration trend (L7) -->
 <div class="panel">
   <h2>가중치 자가 보정 추이 (L7 Weight Calibration)</h2>

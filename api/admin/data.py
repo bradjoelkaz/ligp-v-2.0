@@ -319,6 +319,11 @@ def os_dashboard() -> dict[str, Any]:
     weights_history = store.get_weights_history(limit=20) if store else []
     current_weights = weights_history[-1]["weights"] if weights_history else {}
 
+    # Generated content with a Suno audio track (HTML5 player on the dashboard).
+    audio_assets = []
+    if store:
+        audio_assets = [c for c in store.list_generated_content(limit=20) if c.get("audio_url")]
+
     # Portfolio mix: share of generated assets by channel.
     mix_counts: dict[str, int] = {}
     for item in content_queue():
@@ -349,6 +354,7 @@ def os_dashboard() -> dict[str, Any]:
         "portfolio": portfolio,
         "deployments": deployments,
         "deploy_mix": deploy_mix,
+        "audio_assets": audio_assets,
         "weights_history": weights_history,
         "current_weights": current_weights,
         "feedback_samples": int(totals.get("samples", 0)),

@@ -368,6 +368,54 @@ async def api_deploy(payload: DeployRequest, _: None = Depends(verify_admin_key)
         return JSONResponse({"error": f"Deploy failed: {str(exc)}"}, status_code=500)
 
 
+class MusicRequest(BaseModel):
+    """Generate a Suno track from prompts and attach it to a content asset."""
+
+    suno_prompt: str
+    image_prompt: str = ""
+    title: str = ""
+    instrumental: bool = True
+    content_id: str | None = None
+
+
+@router.post("/api/generate-music", summary="Generate Suno music (cookie session, zero-cost)")
+async def api_generate_music(
+    payload: MusicRequest, _: None = Depends(verify_admin_key)
+) -> JSONResponse:
+    """Generate music via the Suno Pro session; persist audio_url, else fallback card."""
+    try:
+        from content_factory.suno_generator import SunoGenerator
+        from database.db_store import get_generated_content, init_db, save_generated_content
+
+        init_db()
+        result = SunoGenerator().generate(
+            payload.suno_prompt,
+            payload.image_prompt,
+            instrumental=payload.instrumental,
+            title=payload.title,
+        )
+        # Attach the audio to an existing content asset (or create a music asset).
+        if payload.content_id:
+            content = get_generated_content(payload.content_id) or {
+                "content_id": payload.content_id
+            }
+        else:
+            content = {
+                "content_id": f"music:{abs(hash(payload.suno_prompt))}",
+                "format": "suno_music",
+                "title": payload.title or "Suno Track",
+            }
+        content["audio_url"] = result.get("audio_url", "")
+        content["image_url"] = result.get("image_url", "")
+        content["suno_status"] = result.get("status")
+        content["suno_prompt"] = payload.suno_prompt
+        content["image_prompt"] = payload.image_prompt
+        save_generated_content(content)
+        return JSONResponse({**result, "content_id": content["content_id"]})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Music generation failed: {str(exc)}"}, status_code=500)
+
+
 class PerformanceRequest(BaseModel):
     """Collect (or simulate) performance for a deployed item and calibrate L7."""
 

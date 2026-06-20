@@ -142,8 +142,8 @@ def _run_daily_pipeline(
     return summary
 
 
-def daily_pipeline() -> dict[str, Any]:  # pragma: no cover - requires prefect + collectors
-    """Prefect flow wrapper. Collects live data, runs the pipeline, pushes metrics."""
+def _live_run() -> dict[str, Any]:  # pragma: no cover - requires prefect + collectors
+    """Collect live data, persist L2 docs, run the pipeline, push metrics."""
     from api.metrics import push_metrics
 
     docs = _collect_live()
@@ -169,6 +169,18 @@ def daily_pipeline() -> dict[str, Any]:  # pragma: no cover - requires prefect +
         result = run_daily_pipeline(docs)
     push_metrics(job="iigp-daily-pipeline")
     return result
+
+
+def daily_pipeline() -> dict[str, Any]:
+    """Live entrypoint: runs the pipeline through the self-recovery wrapper.
+
+    Routing through ``run_with_recovery`` means any failure in the live run is
+    caught: a Slack alert is sent and the last calibrated weights + topic cards
+    are restored from SQLite, so the scheduled loop never crashes.
+    """
+    from orchestration.schedule import run_with_recovery
+
+    return run_with_recovery(runner=_live_run)
 
 
 def _collect_live() -> list[dict[str, Any]]:  # pragma: no cover - network

@@ -56,18 +56,47 @@ class BlogGenerator(BaseContentGenerator):
         emoji = EMOTION_EMOJI.get(emotion, "📝")
         label = node.get("label") or node.get("name", "")
         return (
-            "당신은 한국어 콘텐츠 마케터입니다.\n"
+            "당신은 한국어 SEO 콘텐츠 마케터입니다.\n"
             f"주제: {label}\n"
             f"감정: {emotion} {emoji}\n"
             f"키워드: {', '.join(node.get('tags', [])[:5])}\n\n"
-            "다음 구조로 블로그 포스트를 작성해주세요:\n"
-            "1. 제목 (50자 이내, 감정 유발)\n"
-            "2. 리드 문단 (100자, 핵심 요약)\n"
-            "3. 본문 섹션 3개 (각 200자, H2 제목 포함)\n"
-            "4. CTA (30자, 구독/공유 유도)\n"
-            "5. 해시태그 5개\n\n"
-            "응답 형식: JSON {'title': ..., 'body': ..., 'cta': ..., 'hashtags': [...]}"
+            "위 주제로 검색엔진 상위 노출에 유리한 한국어 블로그 포스트를 작성하세요.\n"
+            "요구사항:\n"
+            "1. seo_title: 검색 최적화 제목 (50자 이내, 핵심 키워드 포함)\n"
+            "2. summary: 메타 설명용 요약문 (120자 이내)\n"
+            "3. body: 서론 + H2/H3 소제목 3개 섹션 + 결론 (마크다운)\n"
+            "4. cta: 구독/공유 유도 문구 (30자 이내)\n"
+            "5. tags: SEO 태그 5개 (해시 없이)\n\n"
+            "반드시 다음 JSON 형식으로만 응답하세요:\n"
+            '{"seo_title": "...", "title": "...", "summary": "...", '
+            '"body": "...", "cta": "...", "tags": ["...", "..."]}'
         )
+
+    def _gemini_generate(self, node: dict[str, Any]) -> dict[str, Any] | None:
+        """Generate via OpenRouter/Gemini (preferred when those keys are set).
+
+        Returns a parsed content dict, or None to fall back to OpenAI/template.
+        """
+        if not (os.getenv("OPENROUTER_API_KEY") or os.getenv("GEMINI_API_KEY")):
+            return None
+        try:
+            import json
+
+            from nlp.llm_processor import GeminiProcessor
+
+            raw = GeminiProcessor().complete(self.build_prompt(node, None), as_json=True)
+            if not raw:
+                return None
+            parsed = json.loads(raw)
+            parsed.setdefault("title", parsed.get("seo_title", ""))
+            parsed.setdefault("tags", node.get("tags", []))
+            hashtags = [f"#{t.lstrip('#')}" for t in parsed.get("tags", [])[:5]]
+            parsed["hashtags"] = parsed.get("hashtags", hashtags)
+            parsed["generator"] = "gemini"
+            return parsed
+        except Exception as exc:  # noqa: BLE001 - any failure -> fall back
+            _log.warning("gemini_blog_generate_failed", extra={"error": str(exc)})
+            return None
 
     async def call_llm(self, prompt: str) -> str:
         """Call GPT-4o-mini (lazy import, budget-gated)."""
@@ -107,8 +136,11 @@ class BlogGenerator(BaseContentGenerator):
         )
         return {
             "title": title[:50],
+            "seo_title": title[:50],
+            "summary": f"{label}에 대한 최신 트렌드와 핵심 정보를 한눈에 정리했습니다."[:120],
             "body": body,
             "cta": "구독하고 최신 트렌드를 놓치지 마세요!",
+            "tags": tags[:5],
             "hashtags": [f"#{t}" for t in tags[:5]],
             "generator": "template",
         }
@@ -131,26 +163,31 @@ class BlogGenerator(BaseContentGenerator):
         template: dict | None = None,
     ) -> dict[str, Any]:
         """Asynchronous blog generation."""
-        prompt = self.build_prompt(node, template)
-        llm_output = await self.call_llm(prompt)
+        # Prefer OpenRouter/Gemini when configured (Phase 6 real LLM wiring).
+        parsed = self._gemini_generate(node)
 
-        if llm_output:
-            try:
-                import json
+        if parsed is None:
+            prompt = self.build_prompt(node, template)
+            llm_output = await self.call_llm(prompt)
+            if llm_output:
+                try:
+                    import json
 
-                parsed = json.loads(llm_output)
-                parsed["generator"] = "llm"
-                parsed["llm_cost_usd"] = self.COST_PER_CALL_USD
-            except json.JSONDecodeError:
+                    parsed = json.loads(llm_output)
+                    parsed["generator"] = "llm"
+                    parsed["llm_cost_usd"] = self.COST_PER_CALL_USD
+                except json.JSONDecodeError:
+                    parsed = self._template_fallback(node)
+            else:
                 parsed = self._template_fallback(node)
-        else:
-            parsed = self._template_fallback(node)
 
         max_chars = PLATFORM_MAX_CHARS.get(platform, PLATFORM_MAX_CHARS["default"])
         parsed["body"] = parsed.get("body", "")[:max_chars]
         parsed["platform"] = platform
         parsed["format"] = "blog"
-        parsed["tags"] = node.get("tags", [])
+        parsed.setdefault("tags", node.get("tags", []))
+        parsed.setdefault("seo_title", parsed.get("title", ""))
+        parsed.setdefault("summary", "")
         parsed["char_count"] = len(parsed.get("body", ""))
         parsed["token_count"] = estimate_tokens(parsed.get("body", ""))
         return parsed

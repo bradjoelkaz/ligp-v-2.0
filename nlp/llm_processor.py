@@ -192,6 +192,24 @@ Here are the documents to analyze:
             )
             return self._mock_fallback(documents)
 
+    def complete(self, prompt: str, as_json: bool = False) -> str:
+        """Generic LLM text completion (OpenRouter -> Gemini SDK -> Gemini HTTP).
+
+        Returns the raw model text, or "" when no backend/key is available so
+        callers can fall back deterministically. When ``as_json`` is True, a
+        leading ```json fence (if any) is stripped from the response.
+        """
+        if not self.openrouter_key and not self.api_key:
+            return ""
+        text = (
+            self._call_openrouter(prompt)
+            or self._call_gemini_sdk(prompt)
+            or self._call_gemini_http(prompt)
+        )
+        if not text:
+            return ""
+        return self._strip_code_fence(text) if as_json else text
+
     @staticmethod
     def _strip_code_fence(text: str) -> str:
         """Strip a leading ```json / ``` code fence if the model added one."""

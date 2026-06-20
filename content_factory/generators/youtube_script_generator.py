@@ -75,6 +75,44 @@ class YouTubeScriptGenerator(BaseContentGenerator):
             )
         return base
 
+    def _llm_generate(
+        self, topic: str, summary: str, entities: list[str], platform: str
+    ) -> dict[str, Any] | None:
+        """Generate a richer 2-column script via OpenRouter/Gemini when keyed.
+
+        Returns a dict with ``hook``/``cta``/``segments``/SEO fields, or None to
+        fall back to the deterministic builder (offline / on any failure).
+        """
+        import os
+
+        if not (os.getenv("OPENROUTER_API_KEY") or os.getenv("GEMINI_API_KEY")):
+            return None
+        kind = "쇼츠(60초 이내)" if platform == SHORTS else "롱폼"
+        prompt = (
+            "당신은 한국어 유튜브 대본 작가입니다. 다음 주제로 "
+            f"{kind} 영상의 2열 대본을 작성하세요.\n"
+            f"주제: {topic}\n요약: {summary}\n키워드: {', '.join(entities[:5])}\n\n"
+            "규칙: 초반 3초 훅과 마지막 구독 유도(CTA)를 반드시 포함하고, 각 구간은 화면 "
+            "연출(visual)과 내레이션 대사(narration)로 구분하세요.\n"
+            "반드시 다음 JSON으로만 응답:\n"
+            '{"seo_title": "...", "summary": "...", "tags": ["..."], '
+            '"hook": "...", "cta": "...", '
+            '"segments": [{"section": "...", "visual": "...", "narration": "..."}]}'
+        )
+        try:
+            import json
+
+            from nlp.llm_processor import GeminiProcessor
+
+            raw = GeminiProcessor().complete(prompt, as_json=True)
+            if not raw:
+                return None
+            data = json.loads(raw)
+            return data if data.get("segments") else None
+        except Exception as exc:  # noqa: BLE001 - fall back to deterministic
+            _log.warning("gemini_youtube_generate_failed", extra={"error": str(exc)})
+            return None
+
     def generate(
         self,
         node: dict[str, Any],
@@ -87,8 +125,31 @@ class YouTubeScriptGenerator(BaseContentGenerator):
         summary = node.get("summary", "")
         entities = [e.get("name", "") for e in node.get("entities", []) if e.get("name")]
 
-        hook = self.generate_hook(topic)
-        cta = self.generate_cta(platform)
+        llm = self._llm_generate(topic, summary, entities, platform)
+        if llm:
+            hook = llm.get("hook") or self.generate_hook(topic)
+            cta = llm.get("cta") or self.generate_cta(platform)
+            body_rows = [
+                {
+                    "section": s.get("section", "본문"),
+                    "visual": s.get("visual", ""),
+                    "narration": s.get("narration", ""),
+                }
+                for s in llm.get("segments", [])
+            ]
+            seo_title = llm.get("seo_title") or topic
+            seo_summary = llm.get("summary") or summary
+            tags = llm.get("tags") or entities[:10]
+            generator = "gemini"
+        else:
+            hook = self.generate_hook(topic)
+            cta = self.generate_cta(platform)
+            body_rows = self._segments(topic, summary, entities, platform)
+            seo_title = f"{topic} | 핵심 정리"
+            seo_summary = summary or f"'{topic}'의 핵심을 빠르게 정리한 영상입니다."
+            tags = entities[:10]
+            generator = "template"
+
         rows: list[dict[str, str]] = [
             {
                 "section": "훅(3초)",
@@ -96,7 +157,7 @@ class YouTubeScriptGenerator(BaseContentGenerator):
                 "narration": hook,
             }
         ]
-        rows.extend(self._segments(topic, summary, entities, platform))
+        rows.extend(body_rows)
         rows.append(
             {"section": "CTA", "visual": "구독 버튼 애니메이션 + 채널 아트 노출", "narration": cta}
         )
@@ -104,13 +165,16 @@ class YouTubeScriptGenerator(BaseContentGenerator):
         script_markdown = self._to_markdown(rows)
         content: dict[str, Any] = {
             "title": f"[{'쇼츠' if platform == SHORTS else '롱폼'}] {topic}",
+            "seo_title": seo_title[:60],
+            "summary": seo_summary[:120],
             "platform": platform,
             "hook": hook,
             "cta": cta,
             "segments": rows,
             "script_markdown": script_markdown,
             "body": script_markdown,
-            "tags": entities[:10],
+            "tags": tags,
+            "generator": generator,
         }
         return self._finalize(content)
 

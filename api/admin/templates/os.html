@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}OS Dashboard{% endblock %}
+
+{% block head %}
+<style>
+  .bar-wrap { background: var(--bg); border: 1px solid var(--border); border-radius: 999px; height: 10px; overflow: hidden; margin-top: 10px; }
+  .bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+  .bar-fill.warn { background: linear-gradient(90deg, var(--warn), var(--danger)); }
+  .goal-row { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .goal-row b { color: var(--text); }
+  .mix-bar { display: flex; height: 14px; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); margin-bottom: 12px; }
+  .mix-seg { height: 100%; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>OS Dashboard</h1>
+<p class="subtitle">1인 AI 지주회사 경영 통제판 — 미션 진척 · 재무/ROI · 포트폴리오 비중</p>
+
+<!-- Mission progress -->
+<div class="panel">
+  <h2>미션 진척도 (Mission Progress)</h2>
+  <div class="cards">
+    <div class="card">
+      <div class="label">이번 달 수익 목표</div>
+      <div class="value">{{ "{:,.0f}".format(os.mission.revenue_actual_krw) }}원</div>
+      <div class="bar-wrap"><div class="bar-fill" style="width: {{ os.mission.revenue_pct }}%"></div></div>
+      <div class="goal-row"><span>{{ os.mission.revenue_pct }}% 달성</span><span>목표 <b>{{ "{:,.0f}".format(os.mission.revenue_target_krw) }}원</b></span></div>
+    </div>
+    <div class="card">
+      <div class="label">구독자 획득 목표</div>
+      <div class="value">{{ "{:,}".format(os.mission.subscribers_actual) }}명</div>
+      <div class="bar-wrap"><div class="bar-fill" style="width: {{ os.mission.subscriber_pct }}%"></div></div>
+      <div class="goal-row"><span>{{ os.mission.subscriber_pct }}% 달성</span><span>목표 <b>{{ "{:,}".format(os.mission.subscriber_target) }}명</b></span></div>
+    </div>
+    <div class="card">
+      <div class="label">피드백 표본 수</div>
+      <div class="value">{{ os.feedback_samples }}</div>
+      <div class="goal-row"><span>L7 자가보정 학습 데이터</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- Finance / ROI -->
+<div class="panel">
+  <h2>재무 및 자원 (Finance &amp; Resource)</h2>
+  <div class="cards">
+    <div class="card">
+      <div class="label">월 예산 소모 (USD)</div>
+      <div class="value">${{ "%.2f"|format(os.finance.cost_used_usd) }}</div>
+      <div class="bar-wrap"><div class="bar-fill {% if os.finance.budget_used_pct > 80 %}warn{% endif %}" style="width: {{ os.finance.budget_used_pct }}%"></div></div>
+      <div class="goal-row"><span>{{ os.finance.budget_used_pct }}% 소모</span><span>예산 <b>${{ "%.2f"|format(os.finance.budget_usd) }}</b></span></div>
+    </div>
+    <div class="card">
+      <div class="label">잔여 예산 (USD)</div>
+      <div class="value">${{ "%.2f"|format(os.finance.budget_remaining_usd) }}</div>
+      <div class="goal-row"><span>남은 자원</span></div>
+    </div>
+    <div class="card">
+      <div class="label">투자수익률 (ROI)</div>
+      <div class="value">{% if os.finance.roi is not none %}{{ os.finance.roi }}x{% else %}—{% endif %}</div>
+      <div class="goal-row"><span>매출 / 비용 (KRW÷USD, 참고용)</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- Portfolio mix -->
+<div class="panel">
+  <h2>포트폴리오 투자 믹스 (Portfolio Mix)</h2>
+  {% if os.portfolio %}
+  <div class="mix-bar">
+    {% set colors = ['#4f9dff', '#27c2a0', '#f5a623', '#a06bff', '#ffd166', '#ff5d73'] %}
+    {% for row in os.portfolio %}
+    <div class="mix-seg" style="width: {{ row.share }}%; background: {{ colors[loop.index0 % colors|length] }};" title="{{ row.channel }} {{ row.share }}%"></div>
+    {% endfor %}
+  </div>
+  <table>
+    <thead><tr><th>채널 (Channel)</th><th>자산 수</th><th>발행 비중</th></tr></thead>
+    <tbody>
+      {% for row in os.portfolio %}
+      <tr><td>{{ row.channel }}</td><td>{{ row.count }}</td><td>{{ row.share }}%</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="subtitle">아직 생성된 자산이 없습니다.</p>
+  {% endif %}
+</div>
+{% endblock %}

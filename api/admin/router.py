@@ -133,6 +133,12 @@ async def trends_page(request: Request) -> HTMLResponse:
     return _render(request, "trends.html")
 
 
+@router.get("/os", response_class=HTMLResponse, summary="OS management dashboard")
+async def os_page(request: Request) -> HTMLResponse:
+    """Render the 1-person AI holding-company management console."""
+    return _render(request, "os.html", os=data.os_dashboard())
+
+
 # -- JSON data endpoints (consumed by the D3 force graph / tiles) ------------
 
 
@@ -206,6 +212,16 @@ async def api_trends(force_refresh: bool = False) -> JSONResponse:
         # 3. Persist analyzed topics to SQLite (asset accumulation).
         save_trend_topics(topics)
 
+        # 3b. Record an estimated LLM spend (only when a real key is configured,
+        #     i.e. not the mock fallback) so the OS dashboard ROI reflects cost.
+        if os.getenv("OPENROUTER_API_KEY") or os.getenv("GEMINI_API_KEY"):
+            try:
+                from database.db_store import record_cost
+
+                record_cost("llm:analyze_trends", 0.002)
+            except Exception:  # noqa: BLE001 - cost ledger is best-effort
+                pass
+
         # 4. Record a Layer-4 volume snapshot for the tracked graph terms so
         #    velocity/acceleration can be computed from real history over time.
         try:
@@ -271,6 +287,64 @@ async def api_trend_velocity() -> JSONResponse:
         return JSONResponse({"tracked": tracked, "terms": len(terms), "count": len(tracked)})
     except Exception as exc:  # noqa: BLE001 - never 500 the admin API
         return JSONResponse({"error": f"Trend velocity failed: {str(exc)}"}, status_code=500)
+
+
+@router.get("/api/os-metrics", summary="OS dashboard metrics (mission/finance/portfolio)")
+async def api_os_metrics() -> JSONResponse:
+    """Return the management-console metrics as JSON."""
+    return JSONResponse(data.os_dashboard())
+
+
+class FeedbackIn(BaseModel):
+    """Performance feedback for one published content item (L7 input)."""
+
+    content_id: str
+    platform: str = "unknown"
+    expected_score: float = 0.0
+    features: dict[str, float] | None = None
+    views: int = 0
+    clicks: int = 0
+    subscribers: int = 0
+    revenue: float = 0.0
+
+
+@router.post("/api/feedback", summary="Record content performance feedback (L7)")
+async def api_record_feedback(
+    payload: FeedbackIn, _: None = Depends(verify_admin_key)
+) -> JSONResponse:
+    """Persist a performance-feedback record for the calibration loop."""
+    try:
+        from feedback_engine.feedback_loop import record_performance
+
+        metrics = {
+            "views": payload.views,
+            "clicks": payload.clicks,
+            "subscribers": payload.subscribers,
+            "revenue": payload.revenue,
+        }
+        actual = record_performance(
+            payload.content_id,
+            payload.platform,
+            payload.expected_score,
+            metrics,
+            features=payload.features,
+        )
+        return JSONResponse({"recorded": True, "actual_score": actual})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Feedback record failed: {str(exc)}"}, status_code=500)
+
+
+@router.post("/api/calibrate", summary="Run L7 weight self-calibration")
+async def api_calibrate(_: None = Depends(verify_admin_key)) -> JSONResponse:
+    """Run one calibration pass and persist updated opportunity-score weights."""
+    try:
+        from database.db_store import init_db
+        from feedback_engine.feedback_loop import calibrate
+
+        init_db()
+        return JSONResponse(calibrate())
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Calibration failed: {str(exc)}"}, status_code=500)
 
 
 # -- write endpoints (persist to graph_nodes / graph_edges) ------------------

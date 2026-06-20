@@ -118,6 +118,19 @@ def init_db() -> None:
                     ts DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
                 """)
+
+            # 7. Generated content assets (e.g. YouTube 2-column scripts).
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS generated_content (
+                    content_id TEXT PRIMARY KEY,
+                    format TEXT,
+                    platform TEXT,
+                    title TEXT,
+                    body TEXT,
+                    payload TEXT,            -- full JSON content object
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
             conn.commit()
             _log.info("sqlite_db_initialized", extra={"path": DB_PATH})
     except Exception as exc:  # noqa: BLE001 - persistence must never crash callers
@@ -444,3 +457,76 @@ def cost_total() -> float:
     except Exception as exc:  # noqa: BLE001
         _log.error("cost_total_failed", extra={"error": str(exc)})
         return 0.0
+
+
+# --- generated content assets (YouTube scripts, etc.) -----------------------
+
+
+def save_generated_content(content: dict[str, Any]) -> str:
+    """Upsert a generated content asset (INSERT OR REPLACE on content_id).
+
+    ``content_id`` is taken from the dict or derived from format+title. The full
+    content object is stored as JSON in ``payload``. Returns the content_id.
+    """
+    content_id = str(
+        content.get("content_id")
+        or f"{content.get('format', 'content')}:{abs(hash(content.get('title', '')))}"
+    )
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO generated_content
+                    (content_id, format, platform, title, body, payload)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    content_id,
+                    content.get("format", ""),
+                    content.get("platform", ""),
+                    content.get("title", ""),
+                    content.get("body", ""),
+                    json.dumps(content, ensure_ascii=False),
+                ),
+            )
+            conn.commit()
+            _log.info("saved_generated_content", extra={"content_id": content_id})
+    except Exception as exc:  # noqa: BLE001
+        _log.error("save_generated_content_failed", extra={"error": str(exc)})
+    return content_id
+
+
+def get_generated_content(content_id: str) -> dict[str, Any] | None:
+    """Return one generated content asset by id (payload JSON-decoded)."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT payload FROM generated_content WHERE content_id = ?", (content_id,)
+            ).fetchone()
+        if not row:
+            return None
+        return json.loads(row["payload"])
+    except Exception as exc:  # noqa: BLE001
+        _log.error("get_generated_content_failed", extra={"id": content_id, "error": str(exc)})
+        return None
+
+
+def list_generated_content(limit: int = 50) -> list[dict[str, Any]]:
+    """Return recent generated content metadata (newest first, no payload)."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT content_id, format, platform, title, created_at
+                FROM generated_content
+                ORDER BY created_at DESC, rowid DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as exc:  # noqa: BLE001
+        _log.error("list_generated_content_failed", extra={"error": str(exc)})
+        return []

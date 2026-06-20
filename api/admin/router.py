@@ -347,6 +347,65 @@ async def api_calibrate(_: None = Depends(verify_admin_key)) -> JSONResponse:
         return JSONResponse({"error": f"Calibration failed: {str(exc)}"}, status_code=500)
 
 
+class ScriptRequest(BaseModel):
+    """Request to generate a 2-column YouTube script from a topic/node."""
+
+    title: str
+    summary: str = ""
+    platform: str = "youtube_long"  # youtube_long | youtube_shorts
+    entities: list[dict[str, str]] | None = None
+
+
+@router.post("/api/generate-script", summary="Generate + persist a 2-column YouTube script")
+async def api_generate_script(
+    payload: ScriptRequest, _: None = Depends(verify_admin_key)
+) -> JSONResponse:
+    """Generate a 2-column YouTube video script and store it (INSERT OR REPLACE)."""
+    try:
+        from content_factory.generators.youtube_script_generator import YouTubeScriptGenerator
+        from database.db_store import init_db, save_generated_content
+
+        init_db()
+        node = {
+            "title": payload.title,
+            "summary": payload.summary,
+            "entities": payload.entities or [],
+        }
+        content = YouTubeScriptGenerator().generate(node, platform=payload.platform)
+        content_id = save_generated_content(content)
+        content["content_id"] = content_id
+        return JSONResponse(content)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Script generation failed: {str(exc)}"}, status_code=500)
+
+
+@router.get("/api/content", summary="List recent generated content assets")
+async def api_list_content() -> JSONResponse:
+    """Return metadata for recently generated content assets."""
+    try:
+        from database.db_store import init_db, list_generated_content
+
+        init_db()
+        return JSONResponse({"items": list_generated_content()})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"List content failed: {str(exc)}"}, status_code=500)
+
+
+@router.get("/api/content/{content_id}", summary="Fetch one generated content asset")
+async def api_get_content(content_id: str) -> JSONResponse:
+    """Return a single generated content asset (e.g. a YouTube script) by id."""
+    try:
+        from database.db_store import get_generated_content, init_db
+
+        init_db()
+        content = get_generated_content(content_id)
+        if content is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse(content)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Get content failed: {str(exc)}"}, status_code=500)
+
+
 # -- write endpoints (persist to graph_nodes / graph_edges) ------------------
 
 

@@ -13,6 +13,7 @@ from ingestion.collectors.feeds import (
     NaverAPICollector,
     RedditFeedCollector,
     RSSCollector,
+    YouTubeFeedCollector,
     collect_all_feeds,
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     "NaverAPICollector",
     "RedditFeedCollector",
     "RSSCollector",
+    "YouTubeFeedCollector",
     "collect_all_feeds",
 ]

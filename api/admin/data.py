@@ -80,6 +80,15 @@ def _graph_source() -> dict[str, list[dict[str, Any]]]:
     return _db_graph() or load_seed_graph()
 
 
+def graph_records() -> dict[str, list[dict[str, Any]]]:
+    """Public accessor for the raw ``{nodes, edges}`` graph (DB-or-seed source).
+
+    Used by exporters (e.g. the Obsidian bridge) that need the unprocessed
+    node/edge records rather than the D3 ``graph_payload`` shape.
+    """
+    return _graph_source()
+
+
 def graph_payload() -> dict[str, Any]:
     """Build a D3-friendly ``{nodes, links}`` payload with colour metadata."""
     graph = _graph_source()

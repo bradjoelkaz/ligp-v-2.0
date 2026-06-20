@@ -23,6 +23,9 @@ from pydantic import BaseModel
 
 from api.admin import data
 from api.metrics import metrics_snapshot, record_graph_size
+from utils.logger import get_logger
+
+_log = get_logger(__name__)
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
@@ -203,6 +206,16 @@ async def api_trends(force_refresh: bool = False) -> JSONResponse:
         # 3. Persist analyzed topics to SQLite (asset accumulation).
         save_trend_topics(topics)
 
+        # 4. Record a Layer-4 volume snapshot for the tracked graph terms so
+        #    velocity/acceleration can be computed from real history over time.
+        try:
+            from time_engine.volume_tracker import record_snapshot
+
+            terms = [n.get("name", "") for n in data.graph_records().get("nodes", [])]
+            record_snapshot(articles, terms)
+        except Exception as snap_exc:  # noqa: BLE001 - snapshot is best-effort
+            _log.warning("trend_volume_snapshot_failed", extra={"error": str(snap_exc)})
+
         _cached_trends = {
             "topics": topics,
             "collected_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
@@ -238,6 +251,26 @@ async def api_obsidian_export() -> JSONResponse:
         return JSONResponse(summary)
     except Exception as exc:  # noqa: BLE001 - never 500 the admin API
         return JSONResponse({"error": f"Obsidian export failed: {str(exc)}"}, status_code=500)
+
+
+@router.get("/api/trend-velocity", summary="Computed velocity/acceleration per tracked term")
+async def api_trend_velocity() -> JSONResponse:
+    """Compute real Layer-4 trend metrics from the persisted volume time-series.
+
+    Reads the accumulated ``term_volume`` history for each knowledge-graph term
+    and runs :class:`TrendDetector` to produce velocity, acceleration and trend
+    state. Read-only: history is accrued by ``/api/trends`` refreshes.
+    """
+    try:
+        from database.db_store import init_db
+        from time_engine.volume_tracker import analyze_tracked
+
+        init_db()
+        terms = [n.get("name", "") for n in data.graph_records().get("nodes", [])]
+        tracked = analyze_tracked(terms)
+        return JSONResponse({"tracked": tracked, "terms": len(terms), "count": len(tracked)})
+    except Exception as exc:  # noqa: BLE001 - never 500 the admin API
+        return JSONResponse({"error": f"Trend velocity failed: {str(exc)}"}, status_code=500)
 
 
 # -- write endpoints (persist to graph_nodes / graph_edges) ------------------

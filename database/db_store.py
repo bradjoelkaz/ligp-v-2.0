@@ -70,6 +70,18 @@ def init_db() -> None:
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
                 """)
+
+            # 3. Per-term mention volume time-series (Layer 4 input).
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS term_volume (
+                    term TEXT NOT NULL,
+                    volume INTEGER NOT NULL,
+                    ts DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_term_volume_term_ts ON term_volume (term, ts)"
+            )
             conn.commit()
             _log.info("sqlite_db_initialized", extra={"path": DB_PATH})
     except Exception as exc:  # noqa: BLE001 - persistence must never crash callers
@@ -181,4 +193,73 @@ def get_latest_trends(limit: int = 10) -> list[dict[str, Any]]:
             return topics
     except Exception as exc:  # noqa: BLE001
         _log.error("get_latest_trends_failed", extra={"error": str(exc)})
+        return []
+
+
+def get_recent_articles(limit: int = 500) -> list[dict[str, Any]]:
+    """Return the most recently collected raw articles (newest first)."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT source_id, title, text, source_url, platform, published_at
+                FROM raw_articles
+                ORDER BY collected_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+    except Exception as exc:  # noqa: BLE001
+        _log.error("get_recent_articles_failed", extra={"error": str(exc)})
+        return []
+
+
+def record_term_volumes(counts: dict[str, int], ts: str | None = None) -> None:
+    """Append a volume snapshot for each term to the ``term_volume`` series.
+
+    ``ts`` is an optional ISO/SQLite timestamp; when omitted SQLite uses
+    ``CURRENT_TIMESTAMP``. Terms with a volume of 0 are still recorded so the
+    series captures decay back to zero.
+    """
+    if not counts:
+        return
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            if ts is None:
+                cursor.executemany(
+                    "INSERT INTO term_volume (term, volume) VALUES (?, ?)",
+                    [(term, int(vol)) for term, vol in counts.items()],
+                )
+            else:
+                cursor.executemany(
+                    "INSERT INTO term_volume (term, volume, ts) VALUES (?, ?, ?)",
+                    [(term, int(vol), ts) for term, vol in counts.items()],
+                )
+            conn.commit()
+            _log.info("recorded_term_volumes", extra={"terms": len(counts)})
+    except Exception as exc:  # noqa: BLE001
+        _log.error("record_term_volumes_failed", extra={"error": str(exc)})
+
+
+def get_term_series(term: str, limit: int = 200) -> list[tuple[str, float]]:
+    """Return ``(ts, volume)`` points for ``term`` in ascending time order."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT ts, volume FROM term_volume
+                WHERE term = ?
+                ORDER BY ts ASC
+                LIMIT ?
+                """,
+                (term, limit),
+            )
+            return [(str(ts), float(vol)) for ts, vol in cursor.fetchall()]
+    except Exception as exc:  # noqa: BLE001
+        _log.error("get_term_series_failed", extra={"term": term, "error": str(exc)})
         return []

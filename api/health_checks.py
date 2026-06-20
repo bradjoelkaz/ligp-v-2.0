@@ -48,13 +48,36 @@ def check_metrics() -> str:
         return "disabled"
 
 
+def check_asset_store() -> str:
+    """Probe the local SQLite asset store (Phase 9).
+
+    Returns ``"ok"`` when all expected tables are present, ``"degraded"`` when
+    some are missing, ``"error"`` on failure. Never raises.
+    """
+    try:
+        from database.db_store import health_check
+
+        report = health_check()
+        if report.get("error"):
+            return "error"
+        return "ok" if report.get("ok") else "degraded"
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("health_asset_store_check_failed", extra={"error": str(exc)})
+        return "error"
+
+
 def health_report() -> tuple[dict[str, Any], bool]:
     """Build the health payload and an ``is_healthy`` flag.
 
     Only a *configured-but-unreachable* database marks the service unhealthy;
     a missing ``DATABASE_URL`` or disabled metrics do not (both are optional).
+    The asset-store status is reported for visibility but is non-fatal.
     """
-    components = {"database": check_database(), "metrics": check_metrics()}
+    components = {
+        "database": check_database(),
+        "metrics": check_metrics(),
+        "asset_store": check_asset_store(),
+    }
     healthy = components["database"] != "disconnected"
     body = {
         "status": "healthy" if healthy else "unhealthy",

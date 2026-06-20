@@ -662,3 +662,46 @@ def get_weights_history(limit: int = 50) -> list[dict[str, Any]]:
     except Exception as exc:  # noqa: BLE001
         _log.error("get_weights_history_failed", extra={"error": str(exc)})
         return []
+
+
+# --- health check (Phase 9) -------------------------------------------------
+
+_EXPECTED_TABLES = (
+    "raw_articles",
+    "trend_topics",
+    "term_volume",
+    "content_feedback",
+    "weights_state",
+    "cost_events",
+    "generated_content",
+    "deployments",
+    "weights_history",
+)
+
+
+def health_check() -> dict[str, Any]:
+    """Diagnose the asset store: presence + row counts of every table.
+
+    Returns ``{"ok": bool, "path": str, "tables": {name: count|-1}}``. ``ok`` is
+    True when all expected tables are reachable. Never raises.
+    """
+    report: dict[str, Any] = {"ok": False, "path": DB_PATH, "tables": {}}
+    try:
+        init_db()
+        with sqlite3.connect(DB_PATH) as conn:
+            existing = {
+                r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            all_ok = True
+            for table in _EXPECTED_TABLES:
+                if table in existing:
+                    count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                    report["tables"][table] = int(count)
+                else:
+                    report["tables"][table] = -1  # missing
+                    all_ok = False
+            report["ok"] = all_ok
+    except Exception as exc:  # noqa: BLE001 - health probe must never raise
+        _log.error("db_store_health_check_failed", extra={"error": str(exc)})
+        report["error"] = str(exc)
+    return report

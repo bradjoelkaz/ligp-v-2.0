@@ -85,3 +85,32 @@ def test_deploy_default_store_integration(tmp_path, monkeypatch):
     out = de.deploy({"content_id": "z1"}, "tistory")  # store=None -> real db_store
     assert out["status"] == "mock"
     assert db_store.get_deployments()[0]["content_id"] == "z1"
+
+
+# --- Phase 9: production no-mock mode ---------------------------------------
+
+
+def test_deploy_production_no_publisher_records_failed(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("IIGP_ALLOW_MOCK", raising=False)
+    store = FakeStore()
+    out = de.deploy({"content_id": "p1"}, "tistory", store=store)
+    assert out["status"] == "failed"
+    assert out["error"] == "no_publisher_configured"
+    assert store.records[0][3] == "failed"
+
+
+def test_deploy_production_publish_failure_records_failed(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("IIGP_ALLOW_MOCK", raising=False)
+    store = FakeStore()
+    out = de.deploy({"content_id": "p2"}, "youtube", store=store, publisher=FailingPublisher())
+    assert out["status"] == "failed"
+
+
+def test_deploy_production_allow_mock_override(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("IIGP_ALLOW_MOCK", "1")
+    store = FakeStore()
+    out = de.deploy({"content_id": "p3"}, "tistory", store=store)
+    assert out["status"] == "mock"

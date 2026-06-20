@@ -59,6 +59,21 @@ def _mock_result(platform: str, content_id: str) -> dict[str, Any]:
     }
 
 
+def _unavailable_result(platform: str, content_id: str, reason: str) -> dict[str, Any]:
+    """Result when no real publish happened.
+
+    Outside production this degrades to a mock success (offline-friendly); in
+    production mocks are disabled, so it records a real ``failed`` status with
+    the reason instead of fabricating a success.
+    """
+    from utils.runtime import mock_allowed
+
+    if mock_allowed():
+        return _mock_result(platform, content_id)
+    _log.error("deploy_failed_production", extra={"platform": platform, "reason": reason})
+    return {"url": "", "status": "failed", "error": reason, "published_at": utcnow_iso()}
+
+
 def _content_id(content: dict[str, Any]) -> str:
     return str(
         content.get("content_id")
@@ -93,14 +108,12 @@ def deploy(
                 result.setdefault("status", "published")
                 result.setdefault("published_at", utcnow_iso())
             else:
-                result = _mock_result(platform, content_id)
-        except Exception as exc:  # noqa: BLE001 - publish failed -> mock
-            _log.warning(
-                "deploy_publish_failed_mocking", extra={"platform": platform, "error": str(exc)}
-            )
-            result = _mock_result(platform, content_id)
+                result = _unavailable_result(platform, content_id, "publisher_unhealthy")
+        except Exception as exc:  # noqa: BLE001 - publish failed
+            _log.warning("deploy_publish_failed", extra={"platform": platform, "error": str(exc)})
+            result = _unavailable_result(platform, content_id, str(exc))
     else:
-        result = _mock_result(platform, content_id)
+        result = _unavailable_result(platform, content_id, "no_publisher_configured")
 
     store.record_deployment(content_id, platform, result.get("url", ""), result["status"])
     out = {"content_id": content_id, "platform": platform, **result}

@@ -287,3 +287,29 @@ def test_weights_history_record_and_get(store):
 def test_weights_history_empty_snapshot_noop(store):
     store.record_weights_snapshot({})
     assert store.get_weights_history() == []
+
+
+# --- Phase 9: health check --------------------------------------------------
+
+
+def test_health_check_ok_on_fresh_db(store):
+    report = store.health_check()
+    assert report["ok"] is True
+    assert report["path"] == store.DB_PATH
+    # all expected tables present (count 0 on fresh db, not -1)
+    assert all(v >= 0 for v in report["tables"].values())
+    assert "raw_articles" in report["tables"] and "deployments" in report["tables"]
+
+
+def test_health_check_counts_rows(store):
+    store.record_deployment("c1", "tistory", "u", "mock")
+    report = store.health_check()
+    assert report["ok"] is True
+    assert report["tables"]["deployments"] == 1
+
+
+def test_health_check_error_on_bad_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(db_store, "DB_PATH", str(tmp_path))  # a directory
+    report = db_store.health_check()
+    assert report["ok"] is False
+    assert "error" in report

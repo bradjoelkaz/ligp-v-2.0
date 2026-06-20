@@ -29,7 +29,7 @@ class GeminiProcessor:
     """Cluster + analyze documents into trending topics via LLM (with fallbacks)."""
 
     def __init__(self, model_name: str = "gemini-1.5-flash") -> None:
-        self.model_name = model_name
+        self.model_name = os.getenv("GEMINI_MODEL", model_name)
         self.api_key = os.getenv("GEMINI_API_KEY", "")
         self.openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
 
@@ -191,6 +191,24 @@ Here are the documents to analyze:
                 extra={"response": text_resp[:500], "error": str(exc)},
             )
             return self._mock_fallback(documents)
+
+    def complete(self, prompt: str, as_json: bool = False) -> str:
+        """Generic LLM text completion (OpenRouter -> Gemini SDK -> Gemini HTTP).
+
+        Returns the raw model text, or "" when no backend/key is available so
+        callers can fall back deterministically. When ``as_json`` is True, a
+        leading ```json fence (if any) is stripped from the response.
+        """
+        if not self.openrouter_key and not self.api_key:
+            return ""
+        text = (
+            self._call_openrouter(prompt)
+            or self._call_gemini_sdk(prompt)
+            or self._call_gemini_http(prompt)
+        )
+        if not text:
+            return ""
+        return self._strip_code_fence(text) if as_json else text
 
     @staticmethod
     def _strip_code_fence(text: str) -> str:

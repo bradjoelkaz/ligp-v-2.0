@@ -28,6 +28,38 @@ from utils.logger import get_logger
 _log = get_logger(__name__)
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
+_HANGUL_RE = re.compile(r"[\uac00-\ud7a3]")
+
+# Default country code per source platform (L2 normalization).
+PLATFORM_COUNTRY: dict[str, str] = {
+    "naver": "KR",
+    "google": "KR",
+    "reddit": "US",
+    "hackernews": "US",
+    "techcrunch": "US",
+    "bbc": "GB",
+    "youtube": "",  # global; left blank
+}
+
+
+def detect_language(text: str) -> str:
+    """Cheap language guess: 'ko' if any Hangul present, else 'en'."""
+    return "ko" if _HANGUL_RE.search(text or "") else "en"
+
+
+def enrich_l2(doc: dict[str, Any]) -> dict[str, Any]:
+    """Add L2 metadata (language, country, normalized engagement) in place."""
+    doc.setdefault("language", detect_language(f"{doc.get('title', '')} {doc.get('text', '')}"))
+    doc.setdefault("country", PLATFORM_COUNTRY.get(doc.get("platform", ""), ""))
+    eng = doc.get("engagement") or {}
+    doc["engagement"] = {
+        "views": int(eng.get("views", 0) or 0),
+        "likes": int(eng.get("likes", 0) or 0),
+        "comments": int(eng.get("comments", 0) or 0),
+        "shares": int(eng.get("shares", 0) or 0),
+    }
+    return doc
+
 
 # Global + Korean RSS sources. Naver is handled separately (API first, RSS
 # fallback) inside ``collect_all_feeds``.
@@ -155,6 +187,10 @@ class RedditFeedCollector(BaseFeedCollector):
                         "source_url": link,
                         "platform": "reddit",
                         "published_at": post.get("created_utc", ""),
+                        "engagement": {
+                            "likes": int(post.get("ups", 0) or 0),
+                            "comments": int(post.get("num_comments", 0) or 0),
+                        },
                     }
                 )
         except Exception as exc:  # noqa: BLE001
@@ -214,6 +250,131 @@ class NaverAPICollector(BaseFeedCollector):
         return documents
 
 
+class YouTubeFeedCollector(BaseFeedCollector):
+    """YouTube collector: channel Atom RSS (no key) + optional Data API search.
+
+    - ``collect_channel_rss`` parses ``feeds/videos.xml?channel_id=...`` (Atom).
+    - ``collect_api_search`` uses YouTube Data API v3 when ``YOUTUBE_API_KEY`` is
+      set (search -> videos.list for richer metadata).
+
+    Both normalize to the standard document dict so YouTube videos flow through
+    the same pipeline as news articles.
+    """
+
+    _ATOM_NS = {
+        "atom": "http://www.w3.org/2005/Atom",
+        "media": "http://search.yahoo.com/mrss/",
+        "yt": "http://www.youtube.com/xml/schemas/2015",
+    }
+    SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
+    VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
+
+    def collect_channel_rss(self, channel_id: str) -> list[dict[str, Any]]:
+        """Parse a channel's Atom video feed into normalized documents."""
+        url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+        xml_data = self._fetch(url)
+        if not xml_data:
+            return []
+
+        documents: list[dict[str, Any]] = []
+        try:
+            root = ET.fromstring(xml_data.encode("utf-8"))
+            ns = self._ATOM_NS
+            for entry in root.findall("atom:entry", ns):
+                video_id_el = entry.find("yt:videoId", ns)
+                title_el = entry.find("atom:title", ns)
+                pub_el = entry.find("atom:published", ns)
+                link_el = entry.find("atom:link", ns)
+                desc_el = entry.find("media:group/media:description", ns)
+
+                video_id = video_id_el.text if video_id_el is not None else ""
+                title = title_el.text if title_el is not None else ""
+                published = pub_el.text if pub_el is not None else ""
+                link = link_el.get("href") if link_el is not None else ""
+                if not link and video_id:
+                    link = f"https://www.youtube.com/watch?v={video_id}"
+                text = _strip_html(desc_el.text if desc_el is not None else "")
+
+                if not title:
+                    continue
+
+                documents.append(
+                    {
+                        "source_id": f"youtube_{video_id or hash(link)}",
+                        "title": title,
+                        "text": text or title,
+                        "source_url": link or "",
+                        "platform": "youtube",
+                        "published_at": published,
+                    }
+                )
+        except Exception as exc:  # noqa: BLE001
+            _log.error(
+                "youtube_rss_parse_failed", extra={"channel_id": channel_id, "error": str(exc)}
+            )
+        return documents
+
+    def collect_api_search(self, query: str, api_key: str, limit: int = 10) -> list[dict[str, Any]]:
+        """Search videos via the Data API then fetch details (2 calls)."""
+        try:
+            import httpx  # lazy
+
+            with httpx.Client(timeout=self.timeout) as client:
+                search = client.get(
+                    self.SEARCH_URL,
+                    params={
+                        "key": api_key,
+                        "q": query,
+                        "type": "video",
+                        "part": "id,snippet",
+                        "maxResults": min(limit, 50),
+                        "order": "date",
+                        "regionCode": "KR",
+                        "relevanceLanguage": "ko",
+                    },
+                )
+                search.raise_for_status()
+                ids = [
+                    it.get("id", {}).get("videoId", "")
+                    for it in search.json().get("items", [])
+                    if it.get("id", {}).get("kind") == "youtube#video"
+                ]
+                ids = [i for i in ids if i]
+                if not ids:
+                    return []
+                detail = client.get(
+                    self.VIDEOS_URL,
+                    params={"key": api_key, "id": ",".join(ids), "part": "snippet,statistics"},
+                )
+                detail.raise_for_status()
+                items = detail.json().get("items", [])
+        except Exception as exc:  # noqa: BLE001
+            _log.error("youtube_api_collect_failed", extra={"query": query, "error": str(exc)})
+            return []
+
+        documents: list[dict[str, Any]] = []
+        for item in items:
+            snippet = item.get("snippet", {})
+            stats = item.get("statistics", {})
+            vid = item.get("id", "")
+            documents.append(
+                {
+                    "source_id": f"youtube_{vid}",
+                    "title": snippet.get("title", ""),
+                    "text": _strip_html(snippet.get("description", "")) or snippet.get("title", ""),
+                    "source_url": f"https://www.youtube.com/watch?v={vid}",
+                    "platform": "youtube",
+                    "published_at": snippet.get("publishedAt", ""),
+                    "engagement": {
+                        "views": int(stats.get("viewCount", 0) or 0),
+                        "likes": int(stats.get("likeCount", 0) or 0),
+                        "comments": int(stats.get("commentCount", 0) or 0),
+                    },
+                }
+            )
+        return documents
+
+
 def collect_all_feeds() -> list[dict[str, Any]]:
     """Fan out across all configured sources and return normalized documents.
 
@@ -229,7 +390,6 @@ def collect_all_feeds() -> list[dict[str, Any]]:
     naver_client_secret = os.getenv("NAVER_CLIENT_SECRET", "")
 
     all_docs: list[dict[str, Any]] = []
-
     # --- Naver: Search API (preferred) or RSS fallback ---
     if naver_client_id and naver_client_secret:
         _log.info("using_naver_search_api_for_collection")
@@ -248,6 +408,25 @@ def collect_all_feeds() -> list[dict[str, Any]]:
     # --- Reddit (public JSON) ---
     for subreddit in DEFAULT_SUBREDDITS:
         all_docs.extend(reddit_collector.collect(subreddit, limit=10))
+
+    # --- YouTube: Data API search (preferred) or channel Atom RSS ---
+    yt = YouTubeFeedCollector()
+    yt_api_key = os.getenv("YOUTUBE_API_KEY", "")
+    yt_channels = [c.strip() for c in os.getenv("YOUTUBE_CHANNEL_IDS", "").split(",") if c.strip()]
+    if yt_api_key:
+        _log.info("using_youtube_data_api_for_collection")
+        for query in ("IT", "테크", "트렌드"):
+            all_docs.extend(yt.collect_api_search(query, yt_api_key, limit=10))
+    elif yt_channels:
+        _log.info("using_youtube_channel_rss_for_collection", extra={"channels": len(yt_channels)})
+        for channel_id in yt_channels:
+            all_docs.extend(yt.collect_channel_rss(channel_id))
+    else:
+        _log.info("youtube_collection_skipped_no_key_or_channels")
+
+    # L2 normalization: language + country + normalized engagement for every doc.
+    for doc in all_docs:
+        enrich_l2(doc)
 
     _log.info("collect_all_feeds_complete", extra={"raw_count": len(all_docs)})
     return all_docs

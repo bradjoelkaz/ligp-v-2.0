@@ -313,6 +313,26 @@ def os_dashboard() -> dict[str, Any]:
 
     roi = round((revenue_actual / cost_used), 2) if cost_used > 0 else None
 
+    # Deployments + calibrated-weights history (Phase 7).
+    deployments = store.get_deployments(limit=10) if store else []
+    deploy_mix = store.deployment_mix() if store else []
+    # Newsletter publish history (deployments tagged 'newsletter').
+    newsletter_history = (
+        [d for d in store.get_deployments(limit=100) if d.get("platform") == "newsletter"][:10]
+        if store
+        else []
+    )
+    weights_history = store.get_weights_history(limit=20) if store else []
+    current_weights = weights_history[-1]["weights"] if weights_history else {}
+
+    # Generated content with a Suno audio track (HTML5 player on the dashboard).
+    audio_assets = []
+    visual_assets = []
+    if store:
+        _assets = store.list_generated_content(limit=20)
+        audio_assets = [c for c in _assets if c.get("audio_url")]
+        visual_assets = [c for c in _assets if c.get("image_url")]
+
     # Portfolio mix: share of generated assets by channel.
     mix_counts: dict[str, int] = {}
     for item in content_queue():
@@ -341,5 +361,12 @@ def os_dashboard() -> dict[str, Any]:
             "roi": roi,
         },
         "portfolio": portfolio,
+        "deployments": deployments,
+        "deploy_mix": deploy_mix,
+        "audio_assets": audio_assets,
+        "visual_assets": visual_assets,
+        "newsletter_history": newsletter_history,
+        "weights_history": weights_history,
+        "current_weights": current_weights,
         "feedback_samples": int(totals.get("samples", 0)),
     }

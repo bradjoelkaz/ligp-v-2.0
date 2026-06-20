@@ -34,8 +34,8 @@ DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "iigp
 
 def init_db() -> None:
     """Create the SQLite tables for raw documents and analyzed topics if absent."""
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     try:
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
 
@@ -48,9 +48,28 @@ def init_db() -> None:
                     source_url TEXT,
                     platform TEXT,
                     published_at TEXT,
+                    language TEXT,
+                    country TEXT,
+                    views INTEGER DEFAULT 0,
+                    likes INTEGER DEFAULT 0,
+                    comments INTEGER DEFAULT 0,
+                    shares INTEGER DEFAULT 0,
                     collected_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
                 """)
+            # Forward-compat: add L2 columns to pre-existing DBs (best-effort).
+            for _col, _decl in (
+                ("language", "TEXT"),
+                ("country", "TEXT"),
+                ("views", "INTEGER DEFAULT 0"),
+                ("likes", "INTEGER DEFAULT 0"),
+                ("comments", "INTEGER DEFAULT 0"),
+                ("shares", "INTEGER DEFAULT 0"),
+            ):
+                try:
+                    cursor.execute(f"ALTER TABLE raw_articles ADD COLUMN {_col} {_decl}")
+                except sqlite3.OperationalError:
+                    pass  # column already exists
 
             # 2. Analyzed trend topics (entities + prompts).
             cursor.execute("""
@@ -118,6 +137,47 @@ def init_db() -> None:
                     ts DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
                 """)
+
+            # 7. Generated content assets (e.g. YouTube 2-column scripts).
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS generated_content (
+                    content_id TEXT PRIMARY KEY,
+                    format TEXT,
+                    platform TEXT,
+                    title TEXT,
+                    body TEXT,
+                    audio_url TEXT,
+                    image_url TEXT,
+                    payload TEXT,            -- full JSON content object
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+            for _gc_col in ("audio_url", "image_url"):
+                try:
+                    cursor.execute(f"ALTER TABLE generated_content ADD COLUMN {_gc_col} TEXT")
+                except sqlite3.OperationalError:
+                    pass  # column already exists
+
+            # 8. Deployment ledger (virtual multi-channel publishing).
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS deployments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    content_id TEXT,
+                    platform TEXT,
+                    url TEXT,
+                    status TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+
+            # 9. Calibrated-weights history (OS dashboard trend chart).
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS weights_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    weights TEXT NOT NULL,    -- JSON snapshot
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
             conn.commit()
             _log.info("sqlite_db_initialized", extra={"path": DB_PATH})
     except Exception as exc:  # noqa: BLE001 - persistence must never crash callers
@@ -134,8 +194,9 @@ def save_raw_articles(articles: list[dict[str, Any]]) -> None:
             cursor.executemany(
                 """
                 INSERT OR REPLACE INTO raw_articles
-                    (source_id, title, text, source_url, platform, published_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (source_id, title, text, source_url, platform, published_at,
+                     language, country, views, likes, comments, shares)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -145,6 +206,12 @@ def save_raw_articles(articles: list[dict[str, Any]]) -> None:
                         art.get("source_url", ""),
                         art.get("platform", ""),
                         art.get("published_at", ""),
+                        art.get("language", ""),
+                        art.get("country", ""),
+                        int((art.get("engagement") or {}).get("views", 0) or 0),
+                        int((art.get("engagement") or {}).get("likes", 0) or 0),
+                        int((art.get("engagement") or {}).get("comments", 0) or 0),
+                        int((art.get("engagement") or {}).get("shares", 0) or 0),
                     )
                     for art in articles
                 ],
@@ -240,7 +307,8 @@ def get_recent_articles(limit: int = 500) -> list[dict[str, Any]]:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT source_id, title, text, source_url, platform, published_at
+                SELECT source_id, title, text, source_url, platform, published_at,
+                       language, country, views, likes, comments, shares
                 FROM raw_articles
                 ORDER BY collected_at DESC
                 LIMIT ?
@@ -444,3 +512,205 @@ def cost_total() -> float:
     except Exception as exc:  # noqa: BLE001
         _log.error("cost_total_failed", extra={"error": str(exc)})
         return 0.0
+
+
+# --- generated content assets (YouTube scripts, etc.) -----------------------
+
+
+def save_generated_content(content: dict[str, Any]) -> str:
+    """Upsert a generated content asset (INSERT OR REPLACE on content_id).
+
+    ``content_id`` is taken from the dict or derived from format+title. The full
+    content object is stored as JSON in ``payload``. Returns the content_id.
+    """
+    content_id = str(
+        content.get("content_id")
+        or f"{content.get('format', 'content')}:{abs(hash(content.get('title', '')))}"
+    )
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO generated_content
+                    (content_id, format, platform, title, body, audio_url, image_url, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    content_id,
+                    content.get("format", ""),
+                    content.get("platform", ""),
+                    content.get("title", ""),
+                    content.get("body", ""),
+                    content.get("audio_url", ""),
+                    content.get("image_url", ""),
+                    json.dumps(content, ensure_ascii=False),
+                ),
+            )
+            conn.commit()
+            _log.info("saved_generated_content", extra={"content_id": content_id})
+    except Exception as exc:  # noqa: BLE001
+        _log.error("save_generated_content_failed", extra={"error": str(exc)})
+    return content_id
+
+
+def get_generated_content(content_id: str) -> dict[str, Any] | None:
+    """Return one generated content asset by id (payload JSON-decoded)."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT payload FROM generated_content WHERE content_id = ?", (content_id,)
+            ).fetchone()
+        if not row:
+            return None
+        return json.loads(row["payload"])
+    except Exception as exc:  # noqa: BLE001
+        _log.error("get_generated_content_failed", extra={"id": content_id, "error": str(exc)})
+        return None
+
+
+def list_generated_content(limit: int = 50) -> list[dict[str, Any]]:
+    """Return recent generated content metadata (newest first, no payload)."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT content_id, format, platform, title, audio_url, image_url, created_at
+                FROM generated_content
+                ORDER BY created_at DESC, rowid DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as exc:  # noqa: BLE001
+        _log.error("list_generated_content_failed", extra={"error": str(exc)})
+        return []
+
+
+# --- deployments + weights history (Phase 7) --------------------------------
+
+
+def record_deployment(content_id: str, platform: str, url: str, status: str) -> None:
+    """Append a deployment record (virtual or real publish)."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT INTO deployments (content_id, platform, url, status) VALUES (?, ?, ?, ?)",
+                (content_id, platform, url, status),
+            )
+            conn.commit()
+            _log.info("recorded_deployment", extra={"content_id": content_id, "platform": platform})
+    except Exception as exc:  # noqa: BLE001
+        _log.error("record_deployment_failed", extra={"error": str(exc)})
+
+
+def get_deployments(limit: int = 100) -> list[dict[str, Any]]:
+    """Return recent deployment records (newest first)."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT content_id, platform, url, status, created_at
+                FROM deployments ORDER BY created_at DESC, id DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as exc:  # noqa: BLE001
+        _log.error("get_deployments_failed", extra={"error": str(exc)})
+        return []
+
+
+def deployment_mix() -> list[dict[str, Any]]:
+    """Return deployment counts grouped by platform (descending)."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            rows = conn.execute(
+                "SELECT platform, COUNT(*) FROM deployments GROUP BY platform ORDER BY 2 DESC"
+            ).fetchall()
+        return [{"platform": p, "count": int(c)} for p, c in rows]
+    except Exception as exc:  # noqa: BLE001
+        _log.error("deployment_mix_failed", extra={"error": str(exc)})
+        return []
+
+
+def record_weights_snapshot(weights: dict[str, float]) -> None:
+    """Append a JSON snapshot of the calibrated weights for trend charting."""
+    if not weights:
+        return
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT INTO weights_history (weights) VALUES (?)",
+                (json.dumps(weights, ensure_ascii=False),),
+            )
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        _log.error("record_weights_snapshot_failed", extra={"error": str(exc)})
+
+
+def get_weights_history(limit: int = 50) -> list[dict[str, Any]]:
+    """Return recent calibrated-weights snapshots (oldest first for charting)."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT weights, created_at FROM weights_history ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in reversed(rows):  # chronological order
+            try:
+                out.append({"weights": json.loads(r["weights"]), "created_at": r["created_at"]})
+            except (json.JSONDecodeError, TypeError):
+                continue
+        return out
+    except Exception as exc:  # noqa: BLE001
+        _log.error("get_weights_history_failed", extra={"error": str(exc)})
+        return []
+
+
+# --- health check (Phase 9) -------------------------------------------------
+
+_EXPECTED_TABLES = (
+    "raw_articles",
+    "trend_topics",
+    "term_volume",
+    "content_feedback",
+    "weights_state",
+    "cost_events",
+    "generated_content",
+    "deployments",
+    "weights_history",
+)
+
+
+def health_check() -> dict[str, Any]:
+    """Diagnose the asset store: presence + row counts of every table.
+
+    Returns ``{"ok": bool, "path": str, "tables": {name: count|-1}}``. ``ok`` is
+    True when all expected tables are reachable. Never raises.
+    """
+    report: dict[str, Any] = {"ok": False, "path": DB_PATH, "tables": {}}
+    try:
+        init_db()
+        with sqlite3.connect(DB_PATH) as conn:
+            existing = {
+                r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            all_ok = True
+            for table in _EXPECTED_TABLES:
+                if table in existing:
+                    count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                    report["tables"][table] = int(count)
+                else:
+                    report["tables"][table] = -1  # missing
+                    all_ok = False
+            report["ok"] = all_ok
+    except Exception as exc:  # noqa: BLE001 - health probe must never raise
+        _log.error("db_store_health_check_failed", extra={"error": str(exc)})
+        report["error"] = str(exc)
+    return report

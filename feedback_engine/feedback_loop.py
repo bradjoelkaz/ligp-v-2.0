@@ -143,6 +143,10 @@ def calibrate(
                 updater.update(comp, actual, expected, gradient=gradient)
 
     store.save_weights(updater.weights)
+    # Record a snapshot for the OS dashboard weight-trend chart (best-effort).
+    snapshot = getattr(store, "record_weights_snapshot", None)
+    if callable(snapshot):
+        snapshot(dict(updater.weights))
     summary = {
         "updated_weights": dict(updater.weights),
         "samples": len(records),

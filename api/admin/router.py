@@ -347,6 +347,277 @@ async def api_calibrate(_: None = Depends(verify_admin_key)) -> JSONResponse:
         return JSONResponse({"error": f"Calibration failed: {str(exc)}"}, status_code=500)
 
 
+class DeployRequest(BaseModel):
+    """Deploy a stored content asset to a (virtual) social platform."""
+
+    content_id: str
+    platform: str = "tistory"
+
+
+@router.post("/api/deploy", summary="Virtually deploy a content asset to a platform")
+async def api_deploy(payload: DeployRequest, _: None = Depends(verify_admin_key)) -> JSONResponse:
+    """Deploy a stored content asset; real publisher when keyed, else mock."""
+    try:
+        from database.db_store import get_generated_content, init_db
+        from publisher.deploy_engine import deploy
+
+        init_db()
+        content = get_generated_content(payload.content_id) or {"content_id": payload.content_id}
+        return JSONResponse(deploy(content, payload.platform))
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Deploy failed: {str(exc)}"}, status_code=500)
+
+
+class MusicRequest(BaseModel):
+    """Generate a Suno track from prompts and attach it to a content asset."""
+
+    suno_prompt: str
+    image_prompt: str = ""
+    title: str = ""
+    instrumental: bool = True
+    content_id: str | None = None
+
+
+@router.post("/api/generate-music", summary="Generate Suno music (cookie session, zero-cost)")
+async def api_generate_music(
+    payload: MusicRequest, _: None = Depends(verify_admin_key)
+) -> JSONResponse:
+    """Generate music via the Suno Pro session; persist audio_url, else fallback card."""
+    try:
+        from content_factory.suno_generator import SunoGenerator
+        from database.db_store import get_generated_content, init_db, save_generated_content
+
+        init_db()
+        result = SunoGenerator().generate(
+            payload.suno_prompt,
+            payload.image_prompt,
+            instrumental=payload.instrumental,
+            title=payload.title,
+        )
+        # Attach the audio to an existing content asset (or create a music asset).
+        if payload.content_id:
+            content = get_generated_content(payload.content_id) or {
+                "content_id": payload.content_id
+            }
+        else:
+            content = {
+                "content_id": f"music:{abs(hash(payload.suno_prompt))}",
+                "format": "suno_music",
+                "title": payload.title or "Suno Track",
+            }
+        content["audio_url"] = result.get("audio_url", "")
+        content["image_url"] = result.get("image_url", "")
+        content["suno_status"] = result.get("status")
+        content["suno_prompt"] = payload.suno_prompt
+        content["image_prompt"] = payload.image_prompt
+        save_generated_content(content)
+        return JSONResponse({**result, "content_id": content["content_id"]})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Music generation failed: {str(exc)}"}, status_code=500)
+
+
+class ImageRequest(BaseModel):
+    """Generate a thumbnail/cover image from a prompt and attach it to content."""
+
+    image_prompt: str
+    category: str = ""
+    title: str = ""
+    content_id: str | None = None
+
+
+@router.post("/api/generate-image", summary="Generate a thumbnail/cover image (Gemini, fallback)")
+async def api_generate_image(
+    payload: ImageRequest, _: None = Depends(verify_admin_key)
+) -> JSONResponse:
+    """Generate an image via Gemini; persist image_url, else a category default."""
+    try:
+        from content_factory.visual_generator import VisualGenerator
+        from database.db_store import get_generated_content, init_db, save_generated_content
+
+        init_db()
+        cid = payload.content_id or f"image:{abs(hash(payload.image_prompt))}"
+        result = VisualGenerator().generate_image(
+            payload.image_prompt, payload.category, content_id=cid
+        )
+        if payload.content_id:
+            content = get_generated_content(payload.content_id) or {"content_id": cid}
+        else:
+            content = {"content_id": cid, "format": "visual", "title": payload.title or "Visual"}
+        content["image_url"] = result.get("image_url", "")
+        content["image_prompt"] = payload.image_prompt
+        content["image_status"] = result.get("status")
+        save_generated_content(content)
+        return JSONResponse({**result, "content_id": cid})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Image generation failed: {str(exc)}"}, status_code=500)
+
+
+class NewsletterRequest(BaseModel):
+    """Generate or publish a daily-digest newsletter."""
+
+    title: str = "IIGP 데일리 트렌드 다이제스트"
+    english: bool = False
+    limit: int = 10
+    content_id: str | None = None
+
+
+@router.post("/api/generate-newsletter", summary="Assemble a daily-digest newsletter")
+async def api_generate_newsletter(
+    payload: NewsletterRequest, _: None = Depends(verify_admin_key)
+) -> JSONResponse:
+    """Build an HTML+Markdown newsletter from the latest topics and persist it."""
+    try:
+        from content_factory.generators.newsletter_generator import NewsletterGenerator
+        from database.db_store import get_latest_trends, init_db, save_generated_content
+
+        init_db()
+        topics = get_latest_trends(limit=payload.limit)
+        if payload.english:
+            from nlp.translator import Translator
+
+            translator = Translator()
+            topics = [translator.translate_topic(t) for t in topics]
+        nl = NewsletterGenerator().build_digest(
+            topics, title=payload.title, english=payload.english
+        )
+        nl["content_id"] = f"newsletter:{abs(hash(payload.title))}"
+        save_generated_content(nl)
+        return JSONResponse(
+            {
+                "content_id": nl["content_id"],
+                "subject": nl["subject"],
+                "item_count": nl["item_count"],
+                "language": nl["language"],
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Newsletter generation failed: {str(exc)}"}, status_code=500)
+
+
+@router.post("/api/publish-newsletter", summary="Publish a newsletter (Substack/Mailchimp/mock)")
+async def api_publish_newsletter(
+    payload: NewsletterRequest, _: None = Depends(verify_admin_key)
+) -> JSONResponse:
+    """Publish a stored (or freshly assembled) newsletter and record the deployment."""
+    try:
+        from database.db_store import get_generated_content, init_db
+        from publisher.newsletter_publisher import publish
+
+        init_db()
+        newsletter = None
+        if payload.content_id:
+            newsletter = get_generated_content(payload.content_id)
+        if newsletter is None:
+            from content_factory.generators.newsletter_generator import NewsletterGenerator
+            from database.db_store import get_latest_trends
+
+            newsletter = NewsletterGenerator().build_digest(
+                get_latest_trends(limit=payload.limit), title=payload.title
+            )
+            newsletter["content_id"] = (
+                payload.content_id or f"newsletter:{abs(hash(payload.title))}"
+            )
+        return JSONResponse(publish(newsletter))
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Newsletter publish failed: {str(exc)}"}, status_code=500)
+
+
+class PerformanceRequest(BaseModel):
+    """Collect (or simulate) performance for a deployed item and calibrate L7."""
+
+    content_id: str
+    platform: str = "unknown"
+    expected_score: float = 0.0
+    features: dict[str, float] | None = None
+    calibrate: bool = True
+
+
+@router.post("/api/collect-performance", summary="Collect performance + run L7 calibration")
+async def api_collect_performance(
+    payload: PerformanceRequest, _: None = Depends(verify_admin_key)
+) -> JSONResponse:
+    """Simulate/collect market performance, persist as feedback, and calibrate."""
+    try:
+        from database.db_store import init_db
+        from feedback_engine.performance_collector import collect_and_calibrate, collect_performance
+
+        init_db()
+        item = {
+            "content_id": payload.content_id,
+            "platform": payload.platform,
+            "expected_score": payload.expected_score,
+            "features": payload.features,
+        }
+        if payload.calibrate:
+            summary = collect_and_calibrate([item])
+            return JSONResponse({"collected": 1, "calibration": summary})
+        result = collect_performance(
+            payload.content_id, payload.platform, payload.expected_score, features=payload.features
+        )
+        return JSONResponse({"collected": 1, **result})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Collect performance failed: {str(exc)}"}, status_code=500)
+
+
+class ScriptRequest(BaseModel):
+    """Request to generate a 2-column YouTube script from a topic/node."""
+
+    title: str
+    summary: str = ""
+    platform: str = "youtube_long"  # youtube_long | youtube_shorts
+    entities: list[dict[str, str]] | None = None
+
+
+@router.post("/api/generate-script", summary="Generate + persist a 2-column YouTube script")
+async def api_generate_script(
+    payload: ScriptRequest, _: None = Depends(verify_admin_key)
+) -> JSONResponse:
+    """Generate a 2-column YouTube video script and store it (INSERT OR REPLACE)."""
+    try:
+        from content_factory.generators.youtube_script_generator import YouTubeScriptGenerator
+        from database.db_store import init_db, save_generated_content
+
+        init_db()
+        node = {
+            "title": payload.title,
+            "summary": payload.summary,
+            "entities": payload.entities or [],
+        }
+        content = YouTubeScriptGenerator().generate(node, platform=payload.platform)
+        content_id = save_generated_content(content)
+        content["content_id"] = content_id
+        return JSONResponse(content)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Script generation failed: {str(exc)}"}, status_code=500)
+
+
+@router.get("/api/content", summary="List recent generated content assets")
+async def api_list_content() -> JSONResponse:
+    """Return metadata for recently generated content assets."""
+    try:
+        from database.db_store import init_db, list_generated_content
+
+        init_db()
+        return JSONResponse({"items": list_generated_content()})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"List content failed: {str(exc)}"}, status_code=500)
+
+
+@router.get("/api/content/{content_id}", summary="Fetch one generated content asset")
+async def api_get_content(content_id: str) -> JSONResponse:
+    """Return a single generated content asset (e.g. a YouTube script) by id."""
+    try:
+        from database.db_store import get_generated_content, init_db
+
+        init_db()
+        content = get_generated_content(content_id)
+        if content is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse(content)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": f"Get content failed: {str(exc)}"}, status_code=500)
+
+
 # -- write endpoints (persist to graph_nodes / graph_edges) ------------------
 
 

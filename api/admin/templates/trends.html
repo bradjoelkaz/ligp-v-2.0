@@ -533,6 +533,7 @@
             <li><a href="/admin/graph">Graph</a></li>
             <li><a href="/admin/content">Content</a></li>
             <li class="active"><a href="/admin/trends">Trends</a></li>
+            <li><a href="/admin/os">OS</a></li>
             <li><a href="/admin/experiments">Experiments</a></li>
             <li><a href="/admin/settings">Settings</a></li>
         </ul>
@@ -614,6 +615,39 @@
     <script>
         let trendData = [];
         let activeCategory = 'all';
+        let velocityByTerm = {};
+
+        // Fetch computed Layer-4 velocity per tracked term (best-effort).
+        async function fetchVelocityMap() {
+            try {
+                const res = await fetch('/admin/api/trend-velocity');
+                if (!res.ok) return {};
+                const data = await res.json();
+                const map = {};
+                (data.tracked || []).forEach(t => {
+                    map[(t.term || '').toLowerCase()] = t;
+                });
+                return map;
+            } catch (e) {
+                return {};
+            }
+        }
+
+        // Find the computed velocity for a topic by matching its title/entities
+        // against tracked terms. Returns null when there is no real data yet.
+        function lookupVelocity(topic) {
+            const candidates = [topic.title || ''];
+            (topic.entities || []).forEach(ent => candidates.push(ent.name || ''));
+            const hay = candidates.join(' ').toLowerCase();
+            let best = null;
+            for (const term in velocityByTerm) {
+                if (term && hay.includes(term)) {
+                    const cur = velocityByTerm[term];
+                    if (!best || Math.abs(cur.velocity) > Math.abs(best.velocity)) best = cur;
+                }
+            }
+            return best;
+        }
 
         // Escape strings that originate from feeds/LLM before injecting as HTML.
         function escapeHtml(value) {
@@ -686,6 +720,10 @@
 
                 trendData = data.topics || [];
 
+                // Pull real computed velocity/acceleration (Layer 4) to replace
+                // the LLM-guessed values on the cards where a match exists.
+                velocityByTerm = await fetchVelocityMap();
+
                 // A partial error with historical DB topics is shown as a banner,
                 // but we still render whatever topics were recovered.
                 if (data.error) {
@@ -748,13 +786,20 @@
                 const imagePromptText = topic.image_prompt || '분석 대기 중';
                 const trendPct = Math.round((Number(topic.trend_score) || 0) * 100);
 
+                // Prefer real computed velocity (Layer 4) over the LLM guess.
+                const vel = lookupVelocity(topic);
+                const speedText = vel
+                    ? `${vel.velocity_label} (${vel.state_ko})`
+                    : `${topic.velocity} (${topic.acceleration})`;
+                const speedTitle = vel ? '실측 언급량 기반 (Layer 4)' : 'AI 추정값';
+
                 card.innerHTML = `
                     <div>
                         <div class="card-header">
                             <div class="meta-badges">
                                 <span class="badge category">${escapeHtml(topic.category || '기타')}</span>
                                 <span class="badge hot">HOT ${trendPct}%</span>
-                                <span class="badge speed">${escapeHtml(topic.velocity)} (${escapeHtml(topic.acceleration)})</span>
+                                <span class="badge speed" title="${speedTitle}">${escapeHtml(speedText)}</span>
                             </div>
                             ${riskBadge}
                         </div>

@@ -96,3 +96,10 @@ cold_start:
   seed_nodes_path: ./data/seed/seed_nodes.json
   seed_edges_path: ./data/seed/seed_edges.json
   bootstrap_on_empty_graph: true
+
+# ---- Mission / business goals (OS dashboard) -------------------------------
+# Monthly targets the OS dashboard tracks realised performance against.
+mission:
+  monthly_revenue_target_krw: 5000000   # 이번 달 목표 총수익 (원)
+  subscriber_target: 1000               # 이번 달 구독자 획득 목표
+  monthly_llm_budget_usd: 50.0          # 월 LLM/자원 예산 (USD)

@@ -82,6 +82,42 @@ def init_db() -> None:
             cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_term_volume_term_ts ON term_volume (term, ts)"
             )
+
+            # 4. Performance feedback for the L7 self-calibration loop.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS content_feedback (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    content_id TEXT,
+                    platform TEXT,
+                    expected_score REAL,
+                    actual_score REAL,
+                    features TEXT,            -- JSON: {component: feature_value}
+                    views INTEGER,
+                    clicks INTEGER,
+                    subscribers INTEGER,
+                    revenue REAL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+
+            # 5. Calibrated opportunity-score weights (loaded on next run).
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS weights_state (
+                    component TEXT PRIMARY KEY,
+                    weight REAL NOT NULL,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+
+            # 6. Cost ledger (API/resource spend) for the OS dashboard ROI.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS cost_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source TEXT,
+                    usd REAL NOT NULL,
+                    ts DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
             conn.commit()
             _log.info("sqlite_db_initialized", extra={"path": DB_PATH})
     except Exception as exc:  # noqa: BLE001 - persistence must never crash callers
@@ -263,3 +299,148 @@ def get_term_series(term: str, limit: int = 200) -> list[tuple[str, float]]:
     except Exception as exc:  # noqa: BLE001
         _log.error("get_term_series_failed", extra={"term": term, "error": str(exc)})
         return []
+
+
+# --- L7 feedback + calibrated weights + cost ledger -------------------------
+
+
+def record_content_feedback(
+    content_id: str,
+    platform: str,
+    expected_score: float,
+    actual_score: float,
+    features: dict[str, float] | None = None,
+    metrics: dict[str, Any] | None = None,
+) -> None:
+    """Persist one performance-feedback record for the L7 calibration loop."""
+    metrics = metrics or {}
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO content_feedback (
+                    content_id, platform, expected_score, actual_score,
+                    features, views, clicks, subscribers, revenue
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    content_id,
+                    platform,
+                    float(expected_score),
+                    float(actual_score),
+                    json.dumps(features or {}, ensure_ascii=False),
+                    int(metrics.get("views", 0) or 0),
+                    int(metrics.get("clicks", 0) or 0),
+                    int(metrics.get("subscribers", 0) or 0),
+                    float(metrics.get("revenue", 0.0) or 0.0),
+                ),
+            )
+            conn.commit()
+            _log.info("recorded_content_feedback", extra={"content_id": content_id})
+    except Exception as exc:  # noqa: BLE001
+        _log.error("record_content_feedback_failed", extra={"error": str(exc)})
+
+
+def get_recent_feedback(limit: int = 200) -> list[dict[str, Any]]:
+    """Return recent feedback records (newest first), features JSON-decoded."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM content_feedback ORDER BY created_at DESC, id DESC LIMIT ?",
+                (limit,),
+            )
+            rows = cursor.fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            rec = dict(row)
+            try:
+                rec["features"] = json.loads(rec["features"]) if rec["features"] else {}
+            except (json.JSONDecodeError, TypeError):
+                rec["features"] = {}
+            out.append(rec)
+        return out
+    except Exception as exc:  # noqa: BLE001
+        _log.error("get_recent_feedback_failed", extra={"error": str(exc)})
+        return []
+
+
+def feedback_totals() -> dict[str, float]:
+    """Aggregate totals across all feedback records for the OS dashboard."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            row = cursor.execute("""
+                SELECT COUNT(*), COALESCE(SUM(revenue), 0), COALESCE(SUM(subscribers), 0),
+                       COALESCE(SUM(views), 0), COALESCE(SUM(clicks), 0)
+                FROM content_feedback
+                """).fetchone()
+        return {
+            "samples": int(row[0]),
+            "revenue": float(row[1]),
+            "subscribers": int(row[2]),
+            "views": int(row[3]),
+            "clicks": int(row[4]),
+        }
+    except Exception as exc:  # noqa: BLE001
+        _log.error("feedback_totals_failed", extra={"error": str(exc)})
+        return {"samples": 0, "revenue": 0.0, "subscribers": 0, "views": 0, "clicks": 0}
+
+
+def save_weights(weights: dict[str, float]) -> None:
+    """Upsert calibrated opportunity-score weights."""
+    if not weights:
+        return
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.executemany(
+                """
+                INSERT INTO weights_state (component, weight, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(component) DO UPDATE SET
+                    weight = excluded.weight, updated_at = CURRENT_TIMESTAMP
+                """,
+                [(comp, float(val)) for comp, val in weights.items()],
+            )
+            conn.commit()
+            _log.info("saved_weights_state", extra={"count": len(weights)})
+    except Exception as exc:  # noqa: BLE001
+        _log.error("save_weights_failed", extra={"error": str(exc)})
+
+
+def load_weights() -> dict[str, float]:
+    """Return calibrated weights stored by the feedback loop (empty if none)."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            rows = cursor.execute("SELECT component, weight FROM weights_state").fetchall()
+        return {str(comp): float(val) for comp, val in rows}
+    except Exception as exc:  # noqa: BLE001
+        _log.error("load_weights_failed", extra={"error": str(exc)})
+        return {}
+
+
+def record_cost(source: str, usd: float) -> None:
+    """Append a cost event (USD) to the ledger for ROI tracking."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT INTO cost_events (source, usd) VALUES (?, ?)", (source, float(usd))
+            )
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        _log.error("record_cost_failed", extra={"error": str(exc)})
+
+
+def cost_total() -> float:
+    """Return the total recorded cost (USD)."""
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            row = conn.execute("SELECT COALESCE(SUM(usd), 0) FROM cost_events").fetchone()
+        return float(row[0])
+    except Exception as exc:  # noqa: BLE001
+        _log.error("cost_total_failed", extra={"error": str(exc)})
+        return 0.0
